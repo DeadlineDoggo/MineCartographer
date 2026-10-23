@@ -78,7 +78,7 @@ class AnvilWorld private constructor(
 
     override fun loadSurface(pos: ChunkPos): ChunkSurface? {
         val raw = readChunk(pos) ?: return null
-        return SurfaceExtractor.extract(raw.nbt(), pos)
+        return SurfaceExtractor.extract(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos)
     }
 
     fun readChunk(pos: ChunkPos): RawChunk? = if (!hasChunk(pos)) null else region(regions, regionDir, pos)?.read(pos)

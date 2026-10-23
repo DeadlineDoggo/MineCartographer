@@ -1,14 +1,15 @@
 package minecartographer.core.nbt
 
-import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.io.DataInput
 import java.io.DataInputStream
 import java.io.DataOutput
 import java.io.DataOutputStream
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.BufferUnderflowException
+import java.nio.ByteBuffer
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import java.util.zip.DeflaterOutputStream
@@ -68,11 +69,14 @@ class CompoundTag(val entries: MutableMap<String, Tag> = LinkedHashMap()) : Tag 
 }
 
 object Nbt {
-    fun read(input: DataInput): Pair<String, CompoundTag> {
-        val type = input.readByte().toInt()
-        require(type == 10) { "Root tag must be a compound, got type $type" }
-        val name = input.readUTF()
-        return name to readPayload(input, 10, 0) as CompoundTag
+    /**
+     * Parses uncompressed NBT. Compounds entries named in [skip] (at any depth) are stepped over
+     * without being decoded, which saves most of the work when only a few tags are needed.
+     */
+    fun read(bytes: ByteArray, skip: Set<String> = emptySet()): Pair<String, CompoundTag> = try {
+        Reader(ByteBuffer.wrap(bytes), skip).root()
+    } catch (e: BufferUnderflowException) {
+        throw NbtException("NBT data ends unexpectedly")
     }
 
     fun write(output: DataOutput, root: CompoundTag, name: String = "") {
@@ -81,7 +85,7 @@ object Nbt {
         writePayload(output, root)
     }
 
-    fun readGzip(input: InputStream): CompoundTag = read(DataInputStream(BufferedInputStream(GZIPInputStream(input)))).second
+    fun readGzip(input: InputStream): CompoundTag = read(GZIPInputStream(input, 1 shl 16).readAllBytes()).second
 
     fun writeGzip(out: OutputStream, root: CompoundTag) {
         DataOutputStream(BufferedOutputStream(GZIPOutputStream(out))).use { write(it, root) }
@@ -95,43 +99,116 @@ object Nbt {
 
     private const val MAX_DEPTH = 512
 
-    private fun readPayload(input: DataInput, type: Int, depth: Int): Tag {
-        if (depth > MAX_DEPTH) throw NbtException("NBT nested too deeply")
-        return when (type) {
-            1 -> ByteTag(input.readByte())
-            2 -> ShortTag(input.readShort())
-            3 -> IntTag(input.readInt())
-            4 -> LongTag(input.readLong())
-            5 -> FloatTag(input.readFloat())
-            6 -> DoubleTag(input.readDouble())
-            7 -> ByteArrayTag(ByteArray(checkedLength(input.readInt())).also { input.readFully(it) })
-            8 -> StringTag(input.readUTF())
-            9 -> {
-                val elementType = input.readByte().toInt()
-                val n = checkedLength(input.readInt())
-                val list = ListTag(elementType, ArrayList(minOf(n, 1024)))
-                repeat(n) { list.items += readPayload(input, elementType, depth + 1) }
-                list
-            }
-            10 -> {
-                val compound = CompoundTag()
-                while (true) {
-                    val t = input.readByte().toInt()
-                    if (t == 0) break
-                    val name = input.readUTF()
-                    compound[name] = readPayload(input, t, depth + 1)
-                }
-                compound
-            }
-            11 -> IntArrayTag(IntArray(checkedLength(input.readInt())) { input.readInt() })
-            12 -> LongArrayTag(LongArray(checkedLength(input.readInt())) { input.readLong() })
-            else -> throw NbtException("Unknown tag type $type")
+    private class Reader(private val buf: ByteBuffer, private val skip: Set<String>) {
+        fun root(): Pair<String, CompoundTag> {
+            val type = buf.get().toInt()
+            require(type == 10) { "Root tag must be a compound, got type $type" }
+            val name = utf()
+            return name to payload(10, 0) as CompoundTag
         }
-    }
 
-    private fun checkedLength(n: Int): Int {
-        if (n < 0 || n > 64 * 1024 * 1024) throw NbtException("Bad NBT length $n")
-        return n
+        fun payload(type: Int, depth: Int): Tag {
+            if (depth > MAX_DEPTH) throw NbtException("NBT nested too deeply")
+            return when (type) {
+                1 -> ByteTag(buf.get())
+                2 -> ShortTag(buf.getShort())
+                3 -> IntTag(buf.getInt())
+                4 -> LongTag(buf.getLong())
+                5 -> FloatTag(buf.getFloat())
+                6 -> DoubleTag(buf.getDouble())
+                7 -> ByteArrayTag(ByteArray(length(1)).also { buf.get(it) })
+                8 -> StringTag(utf())
+                9 -> {
+                    val elementType = buf.get().toInt()
+                    val n = length(0)
+                    val list = ListTag(elementType, ArrayList(minOf(n, 1024)))
+                    repeat(n) { list.items += payload(elementType, depth + 1) }
+                    list
+                }
+                10 -> {
+                    val compound = CompoundTag()
+                    while (true) {
+                        val t = buf.get().toInt()
+                        if (t == 0) break
+                        val name = utf()
+                        if (name in skip) skipPayload(t, depth + 1) else compound[name] = payload(t, depth + 1)
+                    }
+                    compound
+                }
+                11 -> {
+                    val a = IntArray(length(4))
+                    buf.asIntBuffer().get(a)
+                    buf.position(buf.position() + a.size * 4)
+                    IntArrayTag(a)
+                }
+                12 -> {
+                    val a = LongArray(length(8))
+                    buf.asLongBuffer().get(a)
+                    buf.position(buf.position() + a.size * 8)
+                    LongArrayTag(a)
+                }
+                else -> throw NbtException("Unknown tag type $type")
+            }
+        }
+
+        private fun skipPayload(type: Int, depth: Int) {
+            if (depth > MAX_DEPTH) throw NbtException("NBT nested too deeply")
+            when (type) {
+                1 -> skipBytes(1)
+                2 -> skipBytes(2)
+                3, 5 -> skipBytes(4)
+                4, 6 -> skipBytes(8)
+                7 -> skipBytes(length(1))
+                8 -> skipBytes(buf.getShort().toInt() and 0xFFFF)
+                9 -> {
+                    val elementType = buf.get().toInt()
+                    val n = length(0)
+                    when (elementType) {
+                        0 -> {}
+                        1 -> skipBytes(n)
+                        2 -> skipBytes(n * 2)
+                        3, 5 -> skipBytes(n * 4)
+                        4, 6 -> skipBytes(n * 8)
+                        else -> repeat(n) { skipPayload(elementType, depth + 1) }
+                    }
+                }
+                10 -> while (true) {
+                    val t = buf.get().toInt()
+                    if (t == 0) break
+                    skipBytes(buf.getShort().toInt() and 0xFFFF)
+                    skipPayload(t, depth + 1)
+                }
+                11 -> skipBytes(length(4) * 4)
+                12 -> skipBytes(length(8) * 8)
+                else -> throw NbtException("Unknown tag type $type")
+            }
+        }
+
+        private fun skipBytes(n: Int) {
+            if (n > buf.remaining()) throw BufferUnderflowException()
+            buf.position(buf.position() + n)
+        }
+
+        /** Reads an element count and checks that [elementSize]-byte elements would fit in what is left. */
+        private fun length(elementSize: Int): Int {
+            val n = buf.getInt()
+            if (n < 0 || n > 64 * 1024 * 1024 || n.toLong() * elementSize > buf.remaining()) throw NbtException("Bad NBT length $n")
+            return n
+        }
+
+        /** Java's modified UTF-8; plain ASCII (nearly every tag name) is decoded directly. */
+        private fun utf(): String {
+            val n = buf.getShort().toInt() and 0xFFFF
+            if (n > buf.remaining()) throw BufferUnderflowException()
+            val start = buf.position()
+            val array = buf.array()
+            val offset = buf.arrayOffset() + start
+            var ascii = true
+            for (i in offset until offset + n) if (array[i] <= 0) { ascii = false; break }
+            buf.position(start + n)
+            return if (ascii) String(array, offset, n, Charsets.ISO_8859_1)
+            else DataInputStream(ByteArrayInputStream(array, offset - 2, n + 2)).readUTF()
+        }
     }
 
     private fun writePayload(out: DataOutput, tag: Tag) {

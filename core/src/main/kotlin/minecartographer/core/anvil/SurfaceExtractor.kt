@@ -22,10 +22,21 @@ object SurfaceExtractor {
 
     private val COMPLETE_STATUS = setOf("full", "minecraft:full", "fullchunk", "postprocessed", "minecraft:fullchunk")
 
-    /** A decoded 16x16x16 section: what each block looks like from above. */
-    private class Section(val y: Int, val looks: Array<BlockLook>, val indices: IntArray?) {
-        fun look(x: Int, y: Int, z: Int): BlockLook = if (indices == null) looks[0] else looks[indices[(y shl 8) or (z shl 4) or x]]
-        val allSkip = indices == null && looks[0].kind == BlockKind.SKIP
+    /** Chunk tags the surface scan never looks at; they are stepped over while parsing, not decoded. */
+    val UNUSED_TAGS = setOf(
+        "Entities", "TileEntities", "block_entities", "Heightmaps", "BlockLight", "SkyLight", "Biomes", "biomes",
+        "Structures", "structures", "TileTicks", "LiquidTicks", "block_ticks", "fluid_ticks", "PostProcessing",
+        "Lights", "ToBeTicked", "LiquidsToBeTicked", "CarvingMasks", "blending_data", "UpgradeData",
+    )
+
+    /**
+     * A 16x16x16 section: what each block looks like from above. Block indices are only unpacked
+     * when the scan first reaches the section; most columns stop long before the lower ones.
+     */
+    private class Section(val y: Int, val looks: Array<BlockLook>, unpack: (() -> IntArray)?) {
+        private val indices by lazy(LazyThreadSafetyMode.NONE) { unpack?.invoke() }
+        fun look(x: Int, y: Int, z: Int): BlockLook = if (looks.size == 1) looks[0] else looks[indices!![(y shl 8) or (z shl 4) or x]]
+        val allSkip = looks.all { it.kind == BlockKind.SKIP }
     }
 
     fun extract(root: CompoundTag, pos: ChunkPos): ChunkSurface? {
@@ -48,11 +59,13 @@ object SurfaceExtractor {
     private fun scan(pos: ChunkPos, sections: List<Section>): ChunkSurface? {
         val heights = IntArray(ChunkSurface.COLUMNS) { Int.MIN_VALUE }
         val colors = IntArray(ChunkSurface.COLUMNS)
-        val bySectionY = sections.associateBy { it.y }
+        val lowest = sections.last().y
+        val bySectionY = arrayOfNulls<Section>(sections.first().y - lowest + 1)
+        for (s in sections) bySectionY[s.y - lowest] = s
         val topY = sections.first().y * 16 + 15
-        val bottomY = sections.last().y * 16
+        val bottomY = lowest * 16
 
-        fun lookAt(x: Int, y: Int, z: Int): BlockLook? = bySectionY[y shr 4]?.look(x, y and 15, z)
+        fun lookAt(x: Int, y: Int, z: Int): BlockLook? = bySectionY[(y shr 4) - lowest]?.look(x, y and 15, z)
 
         for (z in 0 until 16) for (x in 0 until 16) {
             var y = topY
@@ -101,7 +114,8 @@ object SurfaceExtractor {
         val looks = palette.compounds().map { BlockColors.look(it.string("Name") ?: "air") }.toTypedArray()
         if (looks.isEmpty()) return@mapNotNull null
         val data = states.longArray("data")
-        Section(s.int("Y") ?: 0, looks, if (looks.size == 1 || data == null) null else unpack(data, looks.size, spanning = false))
+        if (data == null) return@mapNotNull Section(s.int("Y") ?: 0, arrayOf(looks[0]), null)
+        Section(s.int("Y") ?: 0, looks) { unpack(data, looks.size, spanning = false) }
     }
 
     // ---- 1.13 - 1.17 ----
@@ -112,7 +126,7 @@ object SurfaceExtractor {
         val states = s.longArray("BlockStates") ?: return@mapNotNull null
         val looks = palette.compounds().map { BlockColors.look(it.string("Name") ?: "air") }.toTypedArray()
         if (looks.isEmpty()) return@mapNotNull null
-        Section(s.int("Y") ?: 0, looks, if (looks.size == 1) null else unpack(states, looks.size, spanning))
+        Section(s.int("Y") ?: 0, looks) { unpack(states, looks.size, spanning) }
     }
 
     /**
@@ -154,20 +168,29 @@ object SurfaceExtractor {
         val add = s.byteArray("Add")
         val data = s.byteArray("Data")
         // Build a small per-section palette of (id, data) so the scan works like the modern formats.
-        val paletteIndex = HashMap<Int, Int>()
+        // paletteIndex maps (id << 4 | data) to palette index + 1; only the used slots are cleared afterwards.
+        val paletteIndex = legacyPaletteIndex.get()
+        val keys = ArrayList<Int>()
         val looks = ArrayList<BlockLook>()
         val indices = IntArray(4096) { i ->
             var id = blocks[i].toInt() and 0xFF
             if (add != null) id = id or (nibble(add, i) shl 8)
             val meta = if (data != null) nibble(data, i) else 0
             val key = (id shl 4) or meta
-            paletteIndex.getOrPut(key) {
+            var index = paletteIndex[key]
+            if (index == 0) {
                 looks += BlockColors.legacy(id, meta)
-                looks.size - 1
+                keys += key
+                index = looks.size
+                paletteIndex[key] = index
             }
+            index - 1
         }
-        Section(s.int("Y") ?: 0, looks.toTypedArray(), if (looks.size == 1) null else indices)
+        for (key in keys) paletteIndex[key] = 0
+        Section(s.int("Y") ?: 0, looks.toTypedArray()) { indices }
     }
+
+    private val legacyPaletteIndex = ThreadLocal.withInitial { IntArray(1 shl 16) }
 
     private fun nibble(array: ByteArray, i: Int): Int {
         val b = array[i shr 1].toInt()

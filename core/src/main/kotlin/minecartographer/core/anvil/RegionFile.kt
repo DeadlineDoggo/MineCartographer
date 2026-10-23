@@ -6,26 +6,26 @@ import minecartographer.core.nbt.Nbt
 import minecartographer.core.nbt.NbtException
 import java.io.ByteArrayInputStream
 import java.io.Closeable
-import java.io.DataInputStream
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
+import java.util.zip.DataFormatException
 import java.util.zip.GZIPInputStream
-import java.util.zip.InflaterInputStream
+import java.util.zip.Inflater
 
 /** A chunk as stored in a region file: compression type and the still-compressed bytes. */
 class RawChunk(val compression: Int, val data: ByteArray, val timestamp: Int = 0) {
-    fun nbt(): CompoundTag {
-        val input = when (compression) {
-            GZIP -> GZIPInputStream(ByteArrayInputStream(data))
-            ZLIB -> InflaterInputStream(ByteArrayInputStream(data))
-            NONE -> ByteArrayInputStream(data)
-            LZ4 -> throw NbtException("LZ4-compressed chunks are not supported (server.properties region-file-compression)")
-            else -> throw NbtException("Unknown chunk compression $compression")
-        }
-        return Nbt.read(DataInputStream(input.buffered())).second
+    /** Decodes the chunk; tags named in [skip] are left out (see [Nbt.read]). */
+    fun nbt(skip: Set<String> = emptySet()): CompoundTag = Nbt.read(decompressed(), skip).second
+
+    private fun decompressed(): ByteArray = when (compression) {
+        GZIP -> GZIPInputStream(ByteArrayInputStream(data), 1 shl 16).readAllBytes()
+        ZLIB -> inflate(data)
+        NONE -> data
+        LZ4 -> throw NbtException("LZ4-compressed chunks are not supported (server.properties region-file-compression)")
+        else -> throw NbtException("Unknown chunk compression $compression")
     }
 
     companion object {
@@ -37,6 +37,27 @@ class RawChunk(val compression: Int, val data: ByteArray, val timestamp: Int = 0
         const val EXTERNAL = 128
 
         fun of(nbt: CompoundTag) = RawChunk(ZLIB, Nbt.toZlib(nbt), (System.currentTimeMillis() / 1000).toInt())
+
+        /** Inflates in one go; much faster than an InflaterInputStream with its small buffer. */
+        private fun inflate(data: ByteArray): ByteArray {
+            val inflater = Inflater()
+            try {
+                inflater.setInput(data)
+                var out = ByteArray(maxOf(data.size * 6, 1 shl 16))
+                var n = 0
+                while (!inflater.finished()) {
+                    if (n == out.size) out = out.copyOf(out.size * 2)
+                    val read = inflater.inflate(out, n, out.size - n)
+                    if (read == 0 && (inflater.needsInput() || inflater.needsDictionary())) throw NbtException("Truncated chunk data")
+                    n += read
+                }
+                return if (n == out.size) out else out.copyOf(n)
+            } catch (e: DataFormatException) {
+                throw NbtException("Corrupt chunk data: ${e.message}")
+            } finally {
+                inflater.end()
+            }
+        }
     }
 }
 
