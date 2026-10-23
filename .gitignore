@@ -1,0 +1,15 @@
+# Build output
+.gradle/
+.kotlin/
+build/
+out/
+
+# IDEs and editor tooling
+.idea/
+*.iml
+.vscode/
+.github/modernize/
+local.properties
+
+# Minecraft saves used for local testing (see MINECARTOGRAPHER_WORLDS in the README)
+/worlds/
