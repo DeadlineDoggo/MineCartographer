@@ -31,8 +31,10 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import minecartographer.core.ChunkPos
+import minecartographer.core.WorldSource
 import minecartographer.core.edit.ChunkLayer
 import minecartographer.core.edit.ChunkRef
+import minecartographer.core.edit.LayerStack
 import minecartographer.editor.EditorState
 import minecartographer.editor.SelectMode
 import minecartographer.editor.Tool
@@ -49,6 +51,42 @@ import kotlin.math.roundToInt
 private const val VIEW_MIN_Y = 0
 private const val VIEW_MAX_Y = 224
 private const val KEY_PAN_SPEED = 900f // screen px per second
+
+/** Surfaces are prefetched for an area this many times the viewport's width and height, at most [PREFETCH_LIMIT] chunks. */
+private const val PREFETCH_SCALE = 2f
+private const val PREFETCH_LIMIT = 20_000
+
+/** Remembers what the prefetch queue was last built for, so it is only rebuilt once the view has moved far enough. */
+private class PrefetchTracker {
+    private var view: IsoView? = null
+    private var stack: LayerStack? = null
+    private var rotation = 0
+    private var width = 0f
+    private var height = 0f
+
+    fun update(view: IsoView, stack: LayerStack, rotation: Int, width: Float, height: Float): Boolean {
+        val last = this.view
+        val stale = last == null || stack !== this.stack || rotation != this.rotation || width != this.width || height != this.height ||
+            abs(view.centerU - last.centerU) * view.zoom > width / 4 ||
+            abs(view.centerV - last.centerV) * view.zoom > height / 4 ||
+            max(view.zoom / last.zoom, last.zoom / view.zoom) > 1.3
+        if (stale) {
+            this.view = view
+            this.stack = stack
+            this.rotation = rotation
+            this.width = width
+            this.height = height
+        }
+        return stale
+    }
+}
+
+/** Squared iso distance of a chunk (in view space) from the view center; nearer chunks load first. */
+private fun IsoView.distanceSq(viewPos: ChunkPos, hs: Double): Float {
+    val du = 16.0 * (viewPos.x - viewPos.z) - centerU
+    val dv = 8.0 * (viewPos.x + viewPos.z) + 8 - EditorState.SURFACE_Y * hs - centerV
+    return (du * du + dv * dv).toFloat()
+}
 
 private class DrawnTile(
     val pos: ChunkPos,
@@ -75,6 +113,7 @@ private fun rectPositions(a: ChunkPos, b: ChunkPos) = buildList {
 @Composable
 fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
     val drawn = remember { ArrayList<DrawnTile>() }
+    val prefetch = remember { PrefetchTracker() }
     var drag by remember { mutableStateOf(Drag.None) }
 
     fun pick(p: Offset): ChunkPos? {
@@ -272,7 +311,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
             val erased = shown == null && layerColors && stack.base.visible && stack.base.isErased(pos)
             val ref = shown ?: (if (erased) ChunkRef(stack.world, pos) else null) ?: continue
 
-            val tile = state.tiles.request(ref.world, ref.pos, lod, rotation)
+            val tile = state.tiles.request(ref.world, ref.pos, lod, rotation, view.distanceSq(viewPos, hs))
             if (!erased) tilesTotal++
             if (tile == null) {
                 if (!erased) {
@@ -287,6 +326,8 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
             val top = view.toScreenY(originV, size.height).roundToInt()
             val right = view.toScreenX(originU + tile.image.width / tile.lod.toDouble(), size.width).roundToInt()
             val bottom = view.toScreenY(originV + tile.image.height / tile.lod.toDouble(), size.height).roundToInt()
+            // The visible range assumes a height band; with the real heights known, skip what ends up off screen.
+            if (right <= 0 || bottom <= 0 || left >= size.width || top >= size.height) continue
 
             val selected = pos in selection && ghost == null
             val inBrush = brushCenter != null && abs(pos.x - brushCenter.x) <= brushRadius && abs(pos.z - brushCenter.z) <= brushRadius
@@ -314,6 +355,21 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
             )
             drawn += DrawnTile(pos, tile, left, top, right - left, bottom - top, pickable = ghost == null)
         }
+        state.tiles.endFrame()
+
+        if (prefetch.update(view, stack, rotation, size.width, size.height)) {
+            val around = view.visibleChunks(size.width * PREFETCH_SCALE, size.height * PREFETCH_SCALE, VIEW_MIN_Y, VIEW_MAX_Y, hs)
+                .sortedBy { view.distanceSq(it, hs) }
+            val chunks = ArrayList<Pair<WorldSource, ChunkPos>>(min(around.size, PREFETCH_LIMIT))
+            for (viewPos in around) {
+                if (chunks.size == PREFETCH_LIMIT) break
+                val pos = state.fromView(viewPos)
+                val ref = stack.layerAt(pos)?.let { stack.contentOf(it, pos) } ?: continue
+                chunks += ref.world to ref.pos
+            }
+            state.tiles.prefetch(chunks)
+        }
+
         state.frameTilesTotal = tilesTotal
         state.frameTilesMissing = tilesMissing
         state.frameCount++
