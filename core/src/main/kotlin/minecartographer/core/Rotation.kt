@@ -23,7 +23,13 @@ object Rotation {
         else -> z to -x
     }
 
-    fun chunk(turns: Int, pos: ChunkPos): ChunkPos = cell(turns, pos.x, pos.z).let { (x, z) -> ChunkPos(x, z) }
+    /** Same as [cell] for a chunk position, without the intermediate pair (it runs for every chunk on screen). */
+    fun chunk(turns: Int, pos: ChunkPos): ChunkPos = when (normalize(turns)) {
+        0 -> pos
+        1 -> ChunkPos(-pos.z - 1, pos.x)
+        2 -> ChunkPos(-pos.x - 1, -pos.z - 1)
+        else -> ChunkPos(pos.z, -pos.x - 1)
+    }
 }
 
 /** The same chunk seen after rotating the view; [ChunkSurface.pos] stays the original position. */

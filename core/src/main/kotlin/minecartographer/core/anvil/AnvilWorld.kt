@@ -56,7 +56,7 @@ data class WorldInfo(
 class AnvilWorld private constructor(
     val info: WorldInfo,
     private val regionDir: Path,
-    private val present: Map<Long, BitSet>,
+    private val present: Map<ChunkPos, BitSet>,
     override val bounds: ChunkBounds?,
     override val focusBounds: ChunkBounds?,
     val chunkCount: Int,
@@ -71,8 +71,8 @@ class AnvilWorld private constructor(
     val folder: Path get() = info.folder
 
     /** Region files stay open while the world is open; reads on them are thread-safe. */
-    private val regions = ConcurrentHashMap<Long, RegionFile>()
-    private val entityRegions = ConcurrentHashMap<Long, RegionFile>()
+    private val regions = ConcurrentHashMap<ChunkPos, RegionFile>()
+    private val entityRegions = ConcurrentHashMap<ChunkPos, RegionFile>()
 
     override fun hasChunk(pos: ChunkPos) = present[regionKey(pos.regionX, pos.regionZ)]?.get(RegionFile.index(pos)) == true
 
@@ -86,7 +86,7 @@ class AnvilWorld private constructor(
     /** Entities live in their own region files since 1.17; null for older worlds or no entities. */
     fun readEntities(pos: ChunkPos): RawChunk? = region(entityRegions, info.folder.resolve("entities"), pos)?.read(pos)
 
-    private fun region(cache: ConcurrentHashMap<Long, RegionFile>, dir: Path, pos: ChunkPos): RegionFile? {
+    private fun region(cache: ConcurrentHashMap<ChunkPos, RegionFile>, dir: Path, pos: ChunkPos): RegionFile? {
         val key = regionKey(pos.regionX, pos.regionZ)
         cache[key]?.let { return it }
         val file = dir.resolve(RegionFile.fileName(pos.regionX, pos.regionZ))
@@ -96,8 +96,8 @@ class AnvilWorld private constructor(
 
     /** All chunk positions with data, region by region. */
     fun chunks(): Sequence<ChunkPos> = present.asSequence().flatMap { (key, bits) ->
-        val rx = (key shr 32).toInt()
-        val rz = key.toInt()
+        val rx = key.x
+        val rz = key.z
         bits.stream().toArray().asSequence().map { i -> ChunkPos(rx * 32 + (i and 31), rz * 32 + (i shr 5)) }
     }
 
@@ -109,14 +109,15 @@ class AnvilWorld private constructor(
     }
 
     companion object {
-        private fun regionKey(rx: Int, rz: Int) = (rx.toLong() shl 32) or (rz.toLong() and 0xFFFFFFFFL)
+        /** Regions are keyed by their coordinates; ChunkPos hashes well, unlike a packed Long (rx xor rz). */
+        private fun regionKey(rx: Int, rz: Int) = ChunkPos(rx, rz)
 
         /** Opens a world folder; [progress] gets (region files scanned, total). */
         fun open(folder: Path, progress: (Int, Int) -> Unit = { _, _ -> }): AnvilWorld {
             val info = WorldInfo.read(folder)
             val regionDir = folder.resolve("region")
             val files = if (regionDir.isDirectory()) regionDir.listDirectoryEntries("r.*.mca").filter { RegionFile.parseName(it.name) != null } else emptyList()
-            val present = HashMap<Long, BitSet>()
+            val present = HashMap<ChunkPos, BitSet>()
             var minX = Int.MAX_VALUE; var minZ = Int.MAX_VALUE; var maxX = Int.MIN_VALUE; var maxZ = Int.MIN_VALUE
             var count = 0
             files.forEachIndexed { i, file ->
@@ -139,9 +140,9 @@ class AnvilWorld private constructor(
         }
 
         /** Region-granular area holding the middle 96% of chunks along each axis. */
-        private fun focusOf(present: Map<Long, BitSet>): ChunkBounds? {
+        private fun focusOf(present: Map<ChunkPos, BitSet>): ChunkBounds? {
             if (present.isEmpty()) return null
-            fun range(coord: (Long) -> Int): IntRange {
+            fun range(coord: (ChunkPos) -> Int): IntRange {
                 val weighted = present.entries.map { coord(it.key) to it.value.cardinality() }.sortedBy { it.first }
                 val total = weighted.sumOf { it.second }
                 var acc = 0
@@ -150,8 +151,8 @@ class AnvilWorld private constructor(
                 val hi = weighted.first { acc += it.second; acc >= total * 0.98 }.first
                 return lo..hi
             }
-            val xs = range { (it shr 32).toInt() }
-            val zs = range { it.toInt() }
+            val xs = range { it.x }
+            val zs = range { it.z }
             return ChunkBounds(xs.first * 32, zs.first * 32, xs.last * 32 + 31, zs.last * 32 + 31)
         }
 
