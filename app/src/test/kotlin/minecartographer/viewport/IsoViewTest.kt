@@ -27,4 +27,27 @@ class IsoViewTest {
         val depths = visible.map { it.x + it.z }
         assertEquals(depths.sorted(), depths)
     }
+
+    @Test
+    fun `blocks cover every visible chunk exactly once`() {
+        val view = IsoView(centerU = 123.0, centerV = -77.0, zoom = 0.7)
+        val visible = view.visibleChunks(1000f, 700f, 0, 224, 1.0).toSet()
+        val area = view.visibleArea(1000f, 700f, 0, 224, 1.0)
+        val fromBlocks = area.blocks(8).flatMap { VisibleArea.chunksOf(it, 8) }
+        assertEquals(fromBlocks.size, fromBlocks.toSet().size)
+        assertEquals(visible, fromBlocks.filter { it in area }.toSet())
+    }
+
+    @Test
+    fun `block order never draws a chunk behind one it overlaps`() {
+        val view = IsoView(zoom = 0.6)
+        val area = view.visibleArea(900f, 600f, 0, 224, 1.0)
+        val order = area.blocks(4).flatMap { VisibleArea.chunksOf(it, 4) }
+        val index = order.withIndex().associate { (i, p) -> p to i }
+        for (p in order) for (q in order) {
+            // Tiles can only overlap when their screen columns (x - z) are at most one apart.
+            val overlap = kotlin.math.abs((p.x - p.z) - (q.x - q.z)) <= 1
+            if (overlap && p.x + p.z < q.x + q.z) assertTrue(index.getValue(p) < index.getValue(q), "$p must be drawn before $q")
+        }
+    }
 }

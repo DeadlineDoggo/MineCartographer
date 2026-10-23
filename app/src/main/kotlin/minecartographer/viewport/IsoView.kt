@@ -41,21 +41,27 @@ data class IsoView(
      * Heights are only known after loading, so the vertical extent is assumed to be [minY]..[maxY].
      */
     fun visibleChunks(width: Float, height: Float, minY: Int, maxY: Int, hs: Double): List<ChunkPos> {
-        // Diagonal chunk coordinates: b = cx - cz picks the screen column, a = cx + cz the depth row.
-        // A chunk spans u in [16b - 16, 16b + 16] and v in [8a - (maxY + 1) * hs, 8a + 16 - minY * hs].
-        val bMin = floor((screenToU(0f, width) - 16) / 16).toInt()
-        val bMax = ceil((screenToU(width, width) + 16) / 16).toInt()
-        val aMin = floor((screenToV(0f, height) - 16 + minY * hs) / 8).toInt()
-        val aMax = ceil((screenToV(height, height) + (maxY + 1) * hs) / 8).toInt()
-
+        val area = visibleArea(width, height, minY, maxY, hs)
         val result = ArrayList<ChunkPos>()
-        for (a in aMin..aMax) {
-            for (b in bMin..bMax) {
+        for (a in area.aMin..area.aMax) {
+            for (b in area.bMin..area.bMax) {
                 if ((a + b) and 1 != 0) continue
                 result += ChunkPos((a + b) / 2, (a - b) / 2)
             }
         }
         return result
+    }
+
+    /** The area [visibleChunks] covers, for drawing it block by block. */
+    fun visibleArea(width: Float, height: Float, minY: Int, maxY: Int, hs: Double): VisibleArea {
+        // Diagonal chunk coordinates: b = cx - cz picks the screen column, a = cx + cz the depth row.
+        // A chunk spans u in [16b - 16, 16b + 16] and v in [8a - (maxY + 1) * hs, 8a + 16 - minY * hs].
+        return VisibleArea(
+            aMin = floor((screenToV(0f, height) - 16 + minY * hs) / 8).toInt(),
+            aMax = ceil((screenToV(height, height) + (maxY + 1) * hs) / 8).toInt(),
+            bMin = floor((screenToU(0f, width) - 16) / 16).toInt(),
+            bMax = ceil((screenToU(width, width) + 16) / 16).toInt(),
+        )
     }
 
     companion object {
@@ -77,5 +83,48 @@ data class IsoView(
         }
 
         val LODS = listOf(1, 2, 4, 8)
+    }
+}
+
+/** Chunks with x + z in [aMin]..[aMax] and x - z in [bMin]..[bMax]: a screen-aligned rectangle of chunks. */
+class VisibleArea(val aMin: Int, val aMax: Int, val bMin: Int, val bMax: Int) {
+    operator fun contains(pos: ChunkPos): Boolean {
+        val a = pos.x + pos.z
+        val b = pos.x - pos.z
+        return a in aMin..aMax && b in bMin..bMax
+    }
+
+    /**
+     * Blocks of [size] x [size] chunks that touch the area, as (block x, block z), in a back-to-front order:
+     * by bx + bz. Chunks of two blocks can only overlap on screen when one block is at or beyond the
+     * other on both axes, so drawing blocks in this order and each block's chunks by depth gives the
+     * same picture as drawing every chunk by depth.
+     */
+    fun blocks(size: Int): List<ChunkPos> {
+        val bxMin = Math.floorDiv(Math.floorDiv(aMin + bMin, 2), size)
+        val bxMax = Math.floorDiv(Math.floorDiv(aMax + bMax + 1, 2), size)
+        val bzMin = Math.floorDiv(Math.floorDiv(aMin - bMax, 2), size)
+        val bzMax = Math.floorDiv(Math.floorDiv(aMax - bMin + 1, 2), size)
+        val result = ArrayList<ChunkPos>()
+        for (sum in bxMin + bzMin..bxMax + bzMax) {
+            for (bx in maxOf(bxMin, sum - bzMax)..minOf(bxMax, sum - bzMin)) {
+                val bz = sum - bx
+                // The block's chunks span a in [sum * size, sum * size + 2 size - 2], b likewise around (bx - bz) * size.
+                val a0 = sum * size
+                val b0 = (bx - bz) * size
+                if (a0 > aMax || a0 + 2 * size - 2 < aMin || b0 - size + 1 > bMax || b0 + size - 1 < bMin) continue
+                result += ChunkPos(bx, bz)
+            }
+        }
+        return result
+    }
+
+    companion object {
+        /** The chunks of a block, back to front. */
+        fun chunksOf(block: ChunkPos, size: Int): List<ChunkPos> = buildList(size * size) {
+            for (d in 0..2 * size - 2) {
+                for (lx in maxOf(0, d - size + 1)..minOf(size - 1, d)) add(ChunkPos(block.x * size + lx, block.z * size + d - lx))
+            }
+        }
     }
 }
