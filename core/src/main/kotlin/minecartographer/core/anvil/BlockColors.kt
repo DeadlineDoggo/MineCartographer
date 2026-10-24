@@ -22,11 +22,36 @@ class BlockLook(val kind: BlockKind, val color: Int) {
 /**
  * Top-down colors for block names (older numeric ids are mapped to names by [LegacyBlocks]). Colors are close to
  * Minecraft's map colors; unknown and modded blocks get a guess from their name, then a neutral gray.
+ *
+ * Modded blocks can do better once their textures are known: every modded name looked up is remembered
+ * ([takeWanted]), and the app [learn]s its color from the mod's textures. Learned looks win over guesses.
  */
 object BlockColors {
     private val cache = ConcurrentHashMap<String, BlockLook>()
+    private val learned = ConcurrentHashMap<String, BlockLook>()
+    private val wanted: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    fun look(name: String): BlockLook = cache.getOrPut(name) { classify(name.substringAfter(':')) }
+    fun look(name: String): BlockLook = learned[name] ?: cache.getOrPut(name) {
+        if (isModded(name)) wanted += name
+        classify(name.substringAfter(':'))
+    }
+
+    /** Modded names looked up since the last call, still without a learned look. */
+    fun takeWanted(): Set<String> {
+        val names = wanted.toSet()
+        wanted.removeAll(names)
+        return names - learned.keys
+    }
+
+    /** Uses [look] for [name] from now on (chunks read before keep their colors until read again). */
+    fun learn(name: String, look: BlockLook) {
+        learned[name] = look
+    }
+
+    /** [rgb] as a solid look, for colors learned from textures. */
+    fun solidLook(rgb: Int) = solid(rgb and 0xFFFFFF)
+
+    private fun isModded(name: String) = ':' in name && !name.startsWith("minecraft:") && !name.startsWith("minecartographer:")
 
     fun look(state: BlockState): BlockLook =
         if (state.name == BlockState.COLOR_BLOCK) solid(state.properties["rgb"]?.toIntOrNull(16) ?: 0x8A8A8A) else look(state.name)

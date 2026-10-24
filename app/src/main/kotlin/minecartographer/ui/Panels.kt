@@ -332,6 +332,18 @@ fun InspectorPanel(state: EditorState) {
                 KeyValue("Loader", forge.generation.label)
                 KeyValue("Mods", forge.playedMods.size.toString())
                 if (forge.numericIds) KeyValue("Modded block ids", forge.blockNames.size.toString())
+                val loaded = state.loadedTexturesOf(world)
+                KeyValue("Mod archives", when {
+                    loaded != null -> "${loaded.mods.size} found"
+                    state.texturesLoading -> "Looking…"
+                    else -> "–"
+                })
+                loaded?.missingMods?.takeIf { it.isNotEmpty() }?.let { missing ->
+                    Txt("Not found: " + missing.joinToString { it.id }, Modifier.padding(top = 4.dp), color = EditorTheme.warning, size = 11.sp, maxLines = 6)
+                }
+                TextButton("Add mod folder…", Modifier.padding(top = 6.dp)) {
+                    FileDialogs.chooseFolder("Folder with the mods of \"${world.name}\"", (world as? AnvilWorld)?.folder)?.let(state::addModFolder)
+                }
                 Txt(forge.playedMods.joinToString { if (it.version.isBlank()) it.id else "${it.id} ${it.version}" },
                     Modifier.padding(top = 4.dp), color = EditorTheme.textDim, size = 11.sp, maxLines = 12)
             }

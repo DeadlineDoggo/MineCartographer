@@ -42,6 +42,14 @@ import minecartographer.viewport.IsoView
 import minecartographer.textures.AssetSource
 import minecartographer.textures.BlockModels
 import minecartographer.textures.TextureFiles
+import minecartographer.textures.ModLocator
+import minecartographer.textures.FlatModels
+import minecartographer.core.anvil.ModInfo
+import minecartographer.core.anvil.BlockColors
+import minecartographer.core.BlockState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import java.util.concurrent.ConcurrentHashMap
 import minecartographer.viewport.RenderMode
 import minecartographer.viewport.RenderSettings
 
@@ -340,9 +348,15 @@ class EditorState {
     var texturesLoading by mutableStateOf(false)
         private set
 
-    /** Files a world is drawn with: everything read, in order, and the client jar among them. */
-    class LoadedTextures(val files: List<Path>, val coreJar: Path?) {
-        val label: String get() = files.joinToString(" + ") { it.fileName.toString() }
+    /**
+     * Files a world is drawn with: everything read, in priority order, the client jar among them, and for a
+     * world played with mods the [mods] archives found and the mods no archive was found for.
+     */
+    class LoadedTextures(val files: List<Path>, val coreJar: Path?, val mods: List<Path> = emptyList(), val missingMods: List<ModInfo> = emptyList()) {
+        val label: String get() {
+            val others = files.filter { it !in mods }.map { it.fileName.toString() }
+            return (others.dropLast(1) + listOfNotNull(if (mods.isEmpty()) null else "${mods.size} mods") + others.takeLast(1)).joinToString(" + ")
+        }
     }
 
     /** Open textures by file list, shared by worlds that use the same files. Only used while holding [textureLock]. */
@@ -350,18 +364,20 @@ class EditorState {
     private val textureLock = Mutex()
     @Volatile private var textureRequest = 0
 
-    /** The files picked for [world] (empty: the default) and the core jar it was last drawn with. */
+    /** The files picked for [world] (empty: the default), the core jar it was last drawn with and its mod archives. */
     fun texturesOf(world: WorldSource): WorldTextures {
         val picked = worldTextures[world.id] ?: WorldTextures()
-        return picked.copy(coreJar = loadedTextures[world.id]?.coreJar ?: picked.coreJar)
+        val loaded = loadedTextures[world.id]
+        return picked.copy(coreJar = loaded?.coreJar ?: picked.coreJar, mods = loaded?.mods ?: picked.mods)
     }
 
-    /** What [world] is drawn with right now; null before the Textured mode was used or when nothing was found. */
+    /** What [world] is drawn with right now; null before textures were needed or when nothing was found. */
     fun loadedTexturesOf(world: WorldSource): LoadedTextures? = loadedTextures[world.id]
 
     /** Draws [world] with these files (resource packs, top first, and/or a client jar); empty goes back to the default. */
     fun chooseTextures(world: WorldSource, files: List<Path>) {
-        worldTextures[world.id] = WorldTextures(files, coreJar = texturesOf(world).coreJar)
+        val current = texturesOf(world)
+        worldTextures[world.id] = WorldTextures(files, coreJar = current.coreJar, mods = current.mods)
         changed()
         refreshTextures(force = true)
     }
@@ -372,44 +388,119 @@ class EditorState {
         refreshTextures(force = true)
     }
 
+    /** Searches [folder] for mods of every world from now on (it is remembered across sessions). */
+    fun addModFolder(folder: Path) {
+        ModLocator.folders = ModLocator.folders + folder.toAbsolutePath().normalize()
+        missingNotified.clear()
+        refreshTextures(force = true)
+    }
+
+    /** True for worlds played with mods: their assets are loaded in every render mode, for the map colors. */
+    fun hasMods(world: WorldSource) = (world as? AnvilWorld)?.info?.forge?.playedMods?.isNotEmpty() == true
+
     /**
-     * Loads textures for every open world in the background. Each world gets its picked files (or the
-     * default) on top of a client jar: the one it used before, else the jar of its own version, else the
-     * newest. Only runs in the Textured mode, unless [force]d; without textures that mode looks like Blocks.
+     * Loads textures in the background: for every open world in the Textured mode, and always for worlds
+     * played with mods (their blocks get map colors from the mods' textures). Each world gets its picked
+     * files (or the default), then its mod archives, then a client jar: the one it used before, else the jar
+     * of its own version, else the newest. Without textures the Textured mode looks like Blocks.
      */
     private fun refreshTextures(force: Boolean = false) {
-        if (renderSettings.mode != RenderMode.Textured && !force) return
+        val textured = renderSettings.mode == RenderMode.Textured
+        if (!textured && !force && worlds.none(::hasMods)) return
         val request = ++textureRequest
-        val wanted = worlds.map { w -> Triple(w.id, texturesOf(w), w.versionLabel.takeIf { (w.dataVersion ?: 0) >= FLATTENING_DATA_VERSION }) }
+        class Wanted(val world: WorldSource, val picked: WorldTextures, val version: String?)
+        val wanted = worlds.filter { textured || hasMods(it) }.map { w ->
+            Wanted(w, texturesOf(w), w.versionLabel.takeIf { (w.dataVersion ?: 0) >= FLATTENING_DATA_VERSION })
+        }
         texturesLoading = true
         scope.launch(Dispatchers.IO) {
             textureLock.withLock {
                 if (request != textureRequest) return@withLock
-                val sources = wanted.associate { (id, picked, version) -> id to TextureFiles.sources(picked.files, picked.coreJar, version) }
+                val loaded = HashMap<String, LoadedTextures>()
+                for (w in wanted) {
+                    val found = (w.world as? AnvilWorld)?.takeIf(::hasMods)?.let { ModLocator.locate(it, w.picked.mods) }
+                    val base = TextureFiles.sources(w.picked.files, w.picked.coreJar, w.version).orEmpty()
+                    val jar = TextureFiles.coreJarOf(base)
+                    val mods = found?.archives.orEmpty()
+                    // Resource packs over mods over the vanilla jar, as in the game.
+                    val files = (base.filter { it != jar } + mods + listOfNotNull(jar)).distinct()
+                    if (files.isNotEmpty() || found != null) loaded[w.world.id] = LoadedTextures(files, jar, mods, found?.missing.orEmpty())
+                }
                 val models = HashMap<String, BlockModels>()
-                for ((id, files) in sources) {
-                    files ?: continue
-                    val set = textureSets[files] ?: runCatching { AssetSource(files).let { it to BlockModels(it) } }
-                        .onFailure { it.printStackTrace() }.getOrNull()?.also { textureSets[files] = it }
+                for ((id, l) in loaded) {
+                    if (l.files.isEmpty()) continue
+                    val set = textureSets[l.files] ?: runCatching { AssetSource(l.files).let { it to BlockModels(it) } }
+                        .onFailure { it.printStackTrace() }.getOrNull()?.also { textureSets[l.files] = it }
                     set?.let { models[id] = it.second }
                 }
-                val loaded = sources.mapNotNull { (id, files) -> files?.let { id to LoadedTextures(it, TextureFiles.coreJarOf(it)) } }.toMap()
                 val applied = withContext(Dispatchers.Main) {
                     if (request != textureRequest) return@withContext false
                     tiles.textures = models
                     loadedTextures.clear()
                     loadedTextures.putAll(loaded)
                     texturesLoading = false
-                    val missing = worlds.filter { it.id !in loaded }
-                    if (missing.isNotEmpty() && renderSettings.mode == RenderMode.Textured) {
-                        notify("No Minecraft client jar found for textures of ${missing.joinToString { "\"${it.name}\"" }}. Choose one in the View panel.", warning = true)
+                    val noJar = if (textured) worlds.filter { loaded[it.id]?.coreJar == null } else emptyList()
+                    val missing = worlds.firstNotNullOfOrNull { w ->
+                        loaded[w.id]?.missingMods?.takeIf { it.isNotEmpty() && w.id !in missingNotified }?.let { w to it }
+                    }
+                    when {
+                        noJar.isNotEmpty() ->
+                            notify("No Minecraft client jar found for textures of ${noJar.joinToString { "\"${it.name}\"" }}. Choose one in the View panel.", warning = true)
+                        missing != null -> {
+                            val (w, mods) = missing
+                            missingNotified += w.id
+                            notify("${mods.size} mods of \"${w.name}\" not found (${mods.take(4).joinToString { it.id }}${if (mods.size > 4) ", …" else ""}). " +
+                                "Add their folder in the inspector.", warning = true)
+                        }
                     }
                     true
                 }
                 if (applied) {
-                    val used = sources.values.toSet()
+                    val used = loaded.values.map { it.files }.toSet()
                     textureSets.keys.filter { it !in used }.forEach { textureSets.remove(it)?.first?.close() }
+                    retryColors += unresolvedColors
+                    unresolvedColors.clear()
+                    if (models.isNotEmpty()) startColorLearner()
                 }
+            }
+        }
+    }
+
+    /** Worlds already warned about missing mods in this session. */
+    private val missingNotified = HashSet<String>()
+    private var colorLearner: Job? = null
+    /** Modded names no loaded pack could color yet; tried again after the next texture refresh. */
+    private val unresolvedColors: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val retryColors: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * Gives modded blocks their map colors from the mods' textures, as chunks name them: every few hundred
+     * milliseconds it takes the modded names the chunk reader met, looks them up in the loaded packs and,
+     * once some were found, reloads the chunks of the worlds played with mods.
+     */
+    private fun startColorLearner() {
+        if (colorLearner?.isActive == true) return
+        colorLearner = scope.launch(Dispatchers.Default) {
+            while (true) {
+                delay(300)
+                val retry = retryColors.toSet().also { retryColors.removeAll(it) }
+                val names = BlockColors.takeWanted() + retry
+                if (names.isEmpty()) continue
+                val packs = textureLock.withLock { textureSets.values.map { it.second } }
+                val learned = HashSet<String>()
+                for (name in names) {
+                    val ns = name.substringBefore(':')
+                    val look = packs.filter { ns in it.assets.namespaces }
+                        .firstNotNullOfOrNull { runCatching { it.mapLook(BlockState.of(name)) }.getOrNull() }
+                    if (look == null) unresolvedColors += name else {
+                        BlockColors.learn(name, look)
+                        learned += name
+                    }
+                }
+                if (learned.isEmpty()) continue
+                FlatModels.forget(learned)
+                packs.forEach { it.forget(learned) }
+                withContext(Dispatchers.Main) { tiles.reloadWorlds(worlds.filter(::hasMods).mapTo(HashSet()) { it.id }) }
             }
         }
     }

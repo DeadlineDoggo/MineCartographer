@@ -99,6 +99,26 @@ class ChunkTileCache(
             if (settings.mode == RenderMode.Textured) invalidateTiles()
         }
 
+    /**
+     * Reads the chunks of these worlds again (their block colors changed, e.g. learned from mod textures)
+     * and redraws everything; other worlds keep their loaded data.
+     */
+    fun reloadWorlds(worldIds: Set<String>) {
+        if (worldIds.isEmpty()) return
+        synchronized(lock) {
+            val it = data.entries.iterator()
+            while (it.hasNext()) {
+                val e = it.next()
+                if (e.key.worldId in worldIds) {
+                    dataBytes -= sizeOf(e.value)
+                    it.remove()
+                }
+            }
+            empty.removeIf { it.worldId in worldIds }
+        }
+        invalidateTiles()
+    }
+
     /** Drops every tile and block so they are rendered again; loaded chunk data is kept. */
     private fun invalidateTiles() {
         synchronized(lock) {

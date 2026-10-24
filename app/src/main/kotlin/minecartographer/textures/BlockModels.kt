@@ -3,11 +3,13 @@ package minecartographer.textures
 import minecartographer.core.BlockState
 import minecartographer.core.Rotation
 import minecartographer.core.anvil.BlockColors
+import minecartographer.core.anvil.BlockLook
 import minecartographer.core.anvil.BlockKind
 import java.io.ByteArrayInputStream
 import java.io.Closeable
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import javax.imageio.ImageIO
 import kotlin.io.path.name
@@ -35,6 +37,16 @@ object Dir {
 /** A square texture with its mip levels, premultiplied ARGB. */
 class Texture(val size: Int, private val levels: List<IntArray>, val opaque: Boolean) {
     val levelCount get() = levels.size
+
+    /** Average color as opaque RGB (the 1x1 mip level, alpha undone); null when the texture is mostly transparent. */
+    val averageRgb: Int?
+        get() {
+            val c = levels.last()[0]
+            val a = c ushr 24
+            if (a < 0x40) return null
+            fun ch(shift: Int) = (((c shr shift) and 0xFF) * 255 / a).coerceAtMost(255)
+            return (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
+        }
 
     /** The texel at ([u], [v]) in 0..16 texture units, from mip [level]. */
     fun sample(u: Float, v: Float, level: Int): Int {
@@ -161,6 +173,11 @@ interface BlockModelSource {
 object FlatModels : BlockModelSource {
     private val cache = ConcurrentHashMap<BlockState, BlockModel>()
 
+    /** Drops cached cubes of blocks whose color was learned since. */
+    fun forget(names: Set<String>) {
+        cache.keys.removeIf { it.name in names }
+    }
+
     override fun model(state: BlockState, turns: Int): BlockModel = cache.getOrPut(state) {
         val look = BlockColors.look(state)
         val path = state.path
@@ -179,19 +196,30 @@ object FlatModels : BlockModelSource {
     private const val IRON_BARS_COLOR = 0xFF8C8C8C.toInt()
 }
 
-/** Zip files with Minecraft assets (resource packs first, then a client jar), searched in order. */
+/**
+ * Zip files with Minecraft assets (resource packs first, then mod archives, then a client jar) as one tree:
+ * every `assets/` entry is indexed once, the first file having it wins, so a read is one lookup however
+ * many archives there are (a modpack has dozens).
+ */
 class AssetSource(val files: List<Path>) : Closeable {
     private val zips = files.map { ZipFile(it.toFile()) }
+    private val index = HashMap<String, Pair<ZipFile, ZipEntry>>()
+
+    init {
+        for (zip in zips) for (entry in zip.entries()) {
+            if (!entry.isDirectory && entry.name.startsWith("assets/")) index.putIfAbsent(entry.name, zip to entry)
+        }
+    }
+
+    /** Asset namespaces present (`minecraft`, mod ids...). */
+    val namespaces: Set<String> = index.keys.mapTo(HashSet()) { it.substring(7, it.indexOf('/', 7).coerceAtLeast(7)) }
 
     /** e.g. "client 1.20.1.jar" or "MyPack.zip + 1.20.1.jar". */
     val label: String get() = files.joinToString(" + ") { it.name }
 
     fun read(path: String): ByteArray? {
-        for (zip in zips) {
-            val entry = zip.getEntry(path) ?: continue
-            return zip.getInputStream(entry).use { it.readAllBytes() }
-        }
-        return null
+        val (zip, entry) = index[path] ?: return null
+        return zip.getInputStream(entry).use { it.readAllBytes() }
     }
 
     override fun close() = zips.forEach { runCatching { it.close() } }
@@ -202,7 +230,7 @@ class AssetSource(val files: List<Path>) : Closeable {
  * models inherit from parents, and their elements become [Quad]s. Blocks drawn by the game's entity
  * renderer (chests, beds, signs...) and blocks without assets (mods) fall back to [FlatModels].
  */
-class BlockModels(private val assets: AssetSource) : BlockModelSource {
+class BlockModels(val assets: AssetSource) : BlockModelSource {
     private val unrotated = ConcurrentHashMap<BlockState, BlockModel>()
     private val rotated = Array(4) { ConcurrentHashMap<BlockState, BlockModel>() }
     private val models = ConcurrentHashMap<String, Optional<ResolvedModel>>()
@@ -220,6 +248,57 @@ class BlockModels(private val assets: AssetSource) : BlockModelSource {
         return rotated[t].getOrPut(state) { base.rotated(t) }
     }
 
+    /** Drops cached models of blocks whose fallback color was learned since. */
+    fun forget(names: Set<String>) {
+        unrotated.keys.removeIf { it.name in names }
+        rotated.forEach { m -> m.keys.removeIf { it.name in names } }
+    }
+
+    /**
+     * How [state] looks from above according to its assets: the average color of its top texture, or SKIP for
+     * plant-like (cross) models. Reads only the blockstate, models and one texture, so it works without the
+     * vanilla jar too. Null when the pack has no blockstate for it.
+     */
+    fun mapLook(state: BlockState): BlockLook? {
+        val (ns, path) = split(state.name)
+        val json = blockstate(ns, path) ?: return null
+        val refs = ArrayList<Map<*, *>>()
+        // Forge's blockstate format (1.8 - 1.12, "forge_marker": 1) keeps the model and textures in "defaults".
+        (json["defaults"] as? Map<*, *>)?.let { refs += it }
+        (json["variants"] as? Map<*, *>)?.let { variants ->
+            pick(variants.entries.firstOrNull { (key, _) -> matchesVariant(key as String, state) }?.value ?: variants.values.firstOrNull())?.let { refs += it }
+        }
+        (json["multipart"] as? List<*>)?.firstNotNullOfOrNull { (it as? Map<*, *>)?.get("apply") }?.let(::pick)?.let { refs += it }
+        val textures = LinkedHashMap<String, String>()
+        for (ref in refs) {
+            (ref["model"] as? String)?.let { resolve(it) }?.textures?.forEach { (k, v) -> textures.putIfAbsent(k, v) }
+            (ref["textures"] as? Map<*, *>)?.forEach { (k, v) -> if (k is String && v is String) textures[k] = v }
+        }
+        if (textures.isEmpty()) return null
+        if ("cross" in textures || "plant" in textures) return BlockLook.SKIP
+        val model = ResolvedModel(textures, null)
+        val key = TOP_TEXTURES.firstOrNull { it in textures } ?: textures.keys.first()
+        val rgb = resolveTexture(model, "#$key")?.averageRgb ?: return null
+        // Leaves and grass textures are gray and colored by the biome; mods often ship them colored already.
+        return BlockColors.solidLook(if (Tints.biomeColored(path) && isGrayish(rgb)) multiply(rgb, Tints.of(path)) else rgb)
+    }
+
+    private fun isGrayish(rgb: Int): Boolean {
+        val r = (rgb shr 16) and 0xFF; val g = (rgb shr 8) and 0xFF; val b = rgb and 0xFF
+        return maxOf(r, g, b) - minOf(r, g, b) < 24
+    }
+
+    private fun multiply(a: Int, b: Int): Int {
+        fun ch(shift: Int) = ((a shr shift) and 0xFF) * ((b shr shift) and 0xFF) / 255
+        return (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
+    }
+
+    /** The blockstate json for `ns:path`; Chisel-style numbered blocks (`marble2`) fall back to the base name. */
+    private fun blockstate(ns: String, path: String): Map<*, *>? {
+        val names = listOfNotNull(path, ALIASES[path], path.trimEnd { it.isDigit() }.takeIf { it != path && it.isNotEmpty() })
+        return names.firstNotNullOfOrNull { p -> assets.read("assets/$ns/blockstates/$p.json")?.let { Json.parse(String(it)) as? Map<*, *> } }
+    }
+
     fun texture(id: String): Texture? = textures.getOrPut(id) {
         val (ns, path) = split(id)
         Optional(assets.read("assets/$ns/textures/$path.png")?.let { runCatching { Texture.decode(it) }.getOrNull() })
@@ -233,9 +312,7 @@ class BlockModels(private val assets: AssetSource) : BlockModelSource {
         if (path == "lava" || path == "flowing_lava") return fluid("block/lava_still", -1)
 
         val (ns, _) = split(state.name)
-        val json = (ALIASES[path]?.let { listOf(path, it) } ?: listOf(path)).firstNotNullOfOrNull { p ->
-            assets.read("assets/$ns/blockstates/$p.json")?.let { Json.parse(String(it)) as? Map<*, *> }
-        } ?: return null
+        val json = blockstate(ns, path) ?: return null
 
         val parts = ArrayList<Pair<Map<*, *>, Boolean>>() // model reference, matched by variant or multipart
         (json["variants"] as? Map<*, *>)?.let { variants ->
@@ -308,7 +385,9 @@ class BlockModels(private val assets: AssetSource) : BlockModelSource {
         if (depth > 16) return null
         val (ns, path) = split(id)
         if (path.startsWith("builtin/")) return ResolvedModel(emptyMap(), null)
-        val json = assets.read("assets/$ns/models/$path.json")?.let { Json.parse(String(it)) as? Map<*, *> } ?: return null
+        // Before 1.13 (and in Forge blockstates) a model name without a folder means models/block/.
+        val json = (assets.read("assets/$ns/models/$path.json") ?: if ('/' !in path) assets.read("assets/$ns/models/block/$path.json") else null)
+            ?.let { Json.parse(String(it)) as? Map<*, *> } ?: return null
         val parent = (json["parent"] as? String)?.let { resolve(it) }
         val textures = LinkedHashMap(parent?.textures.orEmpty())
         (json["textures"] as? Map<*, *>)?.forEach { (k, v) -> if (k is String && v is String) textures[k] = v }
@@ -328,6 +407,9 @@ class BlockModels(private val assets: AssetSource) : BlockModelSource {
     }
 
     companion object {
+        /** Texture variables that show the top of a block, best first. */
+        private val TOP_TEXTURES = listOf("top", "up", "end", "all", "texture", "side", "particle")
+
         /** Blocks renamed between versions, so a world and a client jar of different versions still match. */
         private val ALIASES = mapOf(
             "short_grass" to "grass", "grass" to "short_grass", "dirt_path" to "grass_path", "grass_path" to "dirt_path",
@@ -354,6 +436,9 @@ object Tints {
         path in GRASSY -> GRASS
         else -> FOLIAGE
     }
+
+    /** Blocks whose texture the game colors by biome (leaves, grass, vines), as opposed to a tinted model face. */
+    fun biomeColored(path: String) = path.endsWith("leaves") || path == "vine" || path in GRASSY
 
     private val GRASSY = setOf("grass_block", "grass", "short_grass", "tall_grass", "fern", "large_fern", "potted_fern", "sugar_cane")
 }

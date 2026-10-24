@@ -50,11 +50,13 @@ sealed interface WorldLocation {
 /**
  * What a world's chunks are drawn with in the Textured mode: [files] the user picked for it (resource packs,
  * top first, optionally a client jar), empty for the editor's default; [coreJar] the client jar with the
- * vanilla ("core") assets that was last used under them. Kept so the merged result knows where every
- * chunk's textures come from, also for chunks pasted from other worlds.
+ * vanilla ("core") assets that was last used under them; [mods] the mod archives found for a world played
+ * with mods (between the two in priority). Kept so the merged result knows where every chunk's textures
+ * come from, also for chunks pasted from other worlds, and so mods outside the world's own instance are
+ * found again.
  */
-data class WorldTextures(val files: List<Path> = emptyList(), val coreJar: Path? = null) {
-    val isDefault: Boolean get() = files.isEmpty() && coreJar == null
+data class WorldTextures(val files: List<Path> = emptyList(), val coreJar: Path? = null, val mods: List<Path> = emptyList()) {
+    val isDefault: Boolean get() = files.isEmpty() && coreJar == null && mods.isEmpty()
 }
 
 /** Everything a project file holds, ready to write. */
@@ -297,16 +299,18 @@ object ProjectFile {
         writeXml(doc, worldFolder.resolve(SOURCES_FILE))
     }
 
-    /** `<textures>` with a `<file>` per picked file and the `<core-jar>`; paths also relative to [dir] when given. */
+    /** `<textures>` with a `<file>` per picked file, a `<mod>` per mod archive and the `<core-jar>`; paths also relative to [dir] when given. */
     private fun Element.writeTextures(doc: Document, dir: Path?, t: WorldTextures) {
         val e = add(doc, "textures")
         for (file in t.files) e.add(doc, "file").setPath(dir, file)
+        for (mod in t.mods) e.add(doc, "mod").setPath(dir, mod)
         t.coreJar?.let { e.add(doc, "core-jar").setPath(dir, it) }
     }
 
     private fun Element.readTextures(dir: Path) = WorldTextures(
         files = children("file").mapNotNull { it.readPath(dir) },
         coreJar = children("core-jar").firstOrNull()?.readPath(dir),
+        mods = children("mod").mapNotNull { it.readPath(dir) },
     )
 
     private fun Element.setPath(dir: Path?, path: Path) {
