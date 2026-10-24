@@ -51,6 +51,7 @@ private fun groups(): List<Group> = listOf(
         Entry(", / .", "Rotate left / right"),
         Entry("F", "Fit the world"),
         Entry("1 / 2 / 3", "Map / Blocks / Textured mode"),
+        Entry("V", "2D from above / 3D"),
     )),
     Group("TOOLS", Tool.entries.map { Entry(it.keyLabel, "${it.label}: ${it.hint}") }),
     Group("SELECTING", listOf(

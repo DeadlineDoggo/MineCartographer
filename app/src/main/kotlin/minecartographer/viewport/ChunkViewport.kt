@@ -90,6 +90,11 @@ private class PrefetchTracker {
 
 /** Squared iso distance of a chunk (in view space) from the view center; nearer chunks load first. */
 private fun IsoView.distanceSq(viewPos: ChunkPos, hs: Double): Float {
+    if (flat) {
+        val du = 32.0 * viewPos.x + 16 - centerU
+        val dv = 32.0 * viewPos.z + 16 - centerV
+        return (du * du + dv * dv).toFloat()
+    }
     val du = 16.0 * (viewPos.x - viewPos.z) - centerU
     val dv = 8.0 * (viewPos.x + viewPos.z) + 8 - EditorState.SURFACE_Y * hs - centerV
     return (du * du + dv * dv).toFloat()
@@ -164,10 +169,9 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
     /** Chunk under the cursor on a flat plane at surface height, for empty areas and smooth dragging. */
     fun pickGround(p: Offset, width: Float, height: Float): ChunkPos {
         val hs = state.renderSettings.heightScale.toDouble()
-        val u = state.view.screenToU(p.x, width)
-        val v = state.view.screenToV(p.y, height)
-        val sum = 2 * (v + EditorState.SURFACE_Y * hs) // x + z
-        return state.fromView(ChunkPos(floor((sum + u) / 2 / 16).toInt(), floor((sum - u) / 2 / 16).toInt()))
+        val view = state.view
+        val (x, z) = view.ground(view.screenToU(p.x, width), view.screenToV(p.y, height), EditorState.SURFACE_Y, hs)
+        return state.fromView(ChunkPos(floor(x / 16).toInt(), floor(z / 16).toInt()))
     }
 
     LaunchedEffect(Unit) {
@@ -476,13 +480,13 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
     }
 }
 
-/** Adds a flat diamond at surface height, shown while a chunk's tile is still rendering. [pos] is in view space. */
+/** Adds a flat diamond at surface height (a square from above), shown while a chunk's tile is still rendering. [pos] is in view space. */
 private fun DrawScope.addPlaceholder(path: Path, pos: ChunkPos, view: IsoView, hs: Double) {
     val x0 = pos.x * 16.0
     val z0 = pos.z * 16.0
     val y = EditorState.SURFACE_Y
-    fun sx(x: Double, z: Double) = view.toScreenX(IsoView.u(x, z), size.width)
-    fun sy(x: Double, z: Double) = view.toScreenY(IsoView.v(x, y, z, hs), size.height)
+    fun sx(x: Double, z: Double) = view.toScreenX(if (view.flat) 2 * x else IsoView.u(x, z), size.width)
+    fun sy(x: Double, z: Double) = view.toScreenY(if (view.flat) 2 * z else IsoView.v(x, y, z, hs), size.height)
     path.moveTo(sx(x0, z0), sy(x0, z0))
     path.lineTo(sx(x0 + 16, z0), sy(x0 + 16, z0))
     path.lineTo(sx(x0 + 16, z0 + 16), sy(x0 + 16, z0 + 16))

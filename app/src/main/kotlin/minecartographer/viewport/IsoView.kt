@@ -14,11 +14,15 @@ import kotlin.math.floor
  * +x runs right-down, +z runs left-down and north (-z) points right-up.
  *
  * [zoom] is screen pixels per iso unit. The camera only translates and zooms; it never rotates.
+ *
+ * [flat] is the 2D view straight from above instead: u = 2 x, v = 2 z (north up), so a block is
+ * 2 x 2 units, as wide as its diamond in the iso view, and the same zoom shows the same detail.
  */
 data class IsoView(
     val centerU: Double = 0.0,
     val centerV: Double = 0.0,
     val zoom: Double = 2.0,
+    val flat: Boolean = false,
 ) {
     fun toScreenX(u: Double, width: Float) = ((u - centerU) * zoom + width / 2).toFloat()
     fun toScreenY(v: Double, height: Float) = ((v - centerV) * zoom + height / 2).toFloat()
@@ -33,7 +37,14 @@ data class IsoView(
         val newZoom = (zoom * factor).coerceIn(MIN_ZOOM, MAX_ZOOM)
         val u = screenToU(ax, width)
         val v = screenToV(ay, height)
-        return IsoView(u - (ax - width / 2) / newZoom, v - (ay - height / 2) / newZoom, newZoom)
+        return copy(centerU = u - (ax - width / 2) / newZoom, centerV = v - (ay - height / 2) / newZoom, zoom = newZoom)
+    }
+
+    /** The point (x, z) in view space under the view point ([u], [v]), on a plane at height [y]. */
+    fun ground(u: Double, v: Double, y: Double, hs: Double): Pair<Double, Double> {
+        if (flat) return u / 2 to v / 2
+        val sum = 2 * (v + y * hs) // x + z
+        return (sum + u) / 2 to (sum - u) / 2
     }
 
     /**
@@ -41,8 +52,14 @@ data class IsoView(
      * Heights are only known after loading, so the vertical extent is assumed to be [minY]..[maxY].
      */
     fun visibleChunks(width: Float, height: Float, minY: Int, maxY: Int, hs: Double): List<ChunkPos> {
-        val area = visibleArea(width, height, minY, maxY, hs)
         val result = ArrayList<ChunkPos>()
+        val area = when (val any = visibleArea(width, height, minY, maxY, hs)) {
+            is FlatArea -> {
+                for (x in any.xMin..any.xMax) for (z in any.zMin..any.zMax) result += ChunkPos(x, z)
+                return result
+            }
+            is VisibleArea -> any
+        }
         for (a in area.aMin..area.aMax) {
             for (b in area.bMin..area.bMax) {
                 if ((a + b) and 1 != 0) continue
@@ -53,7 +70,14 @@ data class IsoView(
     }
 
     /** The area [visibleChunks] covers, for drawing it block by block. */
-    fun visibleArea(width: Float, height: Float, minY: Int, maxY: Int, hs: Double): VisibleArea {
+    fun visibleArea(width: Float, height: Float, minY: Int, maxY: Int, hs: Double): ChunkArea {
+        // Seen from above, a chunk spans u in [32 x, 32 x + 32] and v in [32 z, 32 z + 32].
+        if (flat) return FlatArea(
+            xMin = floor(screenToU(0f, width) / 32).toInt(),
+            xMax = floor(screenToU(width, width) / 32).toInt(),
+            zMin = floor(screenToV(0f, height) / 32).toInt(),
+            zMax = floor(screenToV(height, height) / 32).toInt(),
+        )
         // Diagonal chunk coordinates: b = cx - cz picks the screen column, a = cx + cz the depth row.
         // A chunk spans u in [16b - 16, 16b + 16] and v in [8a - (maxY + 1) * hs, 8a + 16 - minY * hs].
         return VisibleArea(
@@ -71,8 +95,9 @@ data class IsoView(
         fun u(x: Double, z: Double) = x - z
         fun v(x: Double, y: Double, z: Double, hs: Double) = (x + z) / 2 - y * hs
 
-        fun centeredOn(x: Double, y: Double, z: Double, hs: Double, zoom: Double) =
-            IsoView(u(x, z), v(x, y, z, hs), zoom.coerceIn(MIN_ZOOM, MAX_ZOOM))
+        fun centeredOn(x: Double, y: Double, z: Double, hs: Double, zoom: Double, flat: Boolean = false) =
+            if (flat) IsoView(2 * x, 2 * z, zoom.coerceIn(MIN_ZOOM, MAX_ZOOM), flat = true)
+            else IsoView(u(x, z), v(x, y, z, hs), zoom.coerceIn(MIN_ZOOM, MAX_ZOOM))
 
         /** Tile resolution (pixels per iso unit) to render for a zoom level. */
         fun lodFor(zoom: Double): Int = when {
@@ -86,9 +111,28 @@ data class IsoView(
     }
 }
 
+/** The chunks a view may show, and how to walk them in blocks (see [VisibleArea.chunksOf]). */
+sealed interface ChunkArea {
+    operator fun contains(pos: ChunkPos): Boolean
+
+    /** Blocks of [size] x [size] chunks that touch the area, in an order safe to draw in. */
+    fun blocks(size: Int): List<ChunkPos>
+}
+
+/** The 2D view's chunks: a plain rectangle, where nothing overlaps and any order will do. */
+class FlatArea(val xMin: Int, val xMax: Int, val zMin: Int, val zMax: Int) : ChunkArea {
+    override fun contains(pos: ChunkPos) = pos.x in xMin..xMax && pos.z in zMin..zMax
+
+    override fun blocks(size: Int): List<ChunkPos> = buildList {
+        for (bz in Math.floorDiv(zMin, size)..Math.floorDiv(zMax, size)) {
+            for (bx in Math.floorDiv(xMin, size)..Math.floorDiv(xMax, size)) add(ChunkPos(bx, bz))
+        }
+    }
+}
+
 /** Chunks with x + z in [aMin]..[aMax] and x - z in [bMin]..[bMax]: a screen-aligned rectangle of chunks. */
-class VisibleArea(val aMin: Int, val aMax: Int, val bMin: Int, val bMax: Int) {
-    operator fun contains(pos: ChunkPos): Boolean {
+class VisibleArea(val aMin: Int, val aMax: Int, val bMin: Int, val bMax: Int) : ChunkArea {
+    override operator fun contains(pos: ChunkPos): Boolean {
         val a = pos.x + pos.z
         val b = pos.x - pos.z
         return a in aMin..aMax && b in bMin..bMax
@@ -100,7 +144,7 @@ class VisibleArea(val aMin: Int, val aMax: Int, val bMin: Int, val bMax: Int) {
      * other on both axes, so drawing blocks in this order and each block's chunks by depth gives the
      * same picture as drawing every chunk by depth.
      */
-    fun blocks(size: Int): List<ChunkPos> {
+    override fun blocks(size: Int): List<ChunkPos> {
         val bxMin = Math.floorDiv(Math.floorDiv(aMin + bMin, 2), size)
         val bxMax = Math.floorDiv(Math.floorDiv(aMax + bMax + 1, 2), size)
         val bzMin = Math.floorDiv(Math.floorDiv(aMin - bMax, 2), size)

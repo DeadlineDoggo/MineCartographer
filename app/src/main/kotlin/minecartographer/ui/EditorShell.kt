@@ -196,6 +196,7 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             *RenderMode.entries.mapIndexed { i, mode ->
                 MenuItem("${mode.label} mode", "${i + 1}", checked = s.mode == mode) { state.setRenderMode(mode) }
             }.toTypedArray(),
+            MenuItem("2D from above", "V", checked = s.flat) { state.setFlat(!s.flat) },
             MenuSeparator,
             MenuItem("Mods & textures…", enabled = (state.activeWorld as? minecartographer.core.anvil.AnvilWorld)?.info?.forge != null) { state.modsPanelVisible = true },
             MenuSeparator,

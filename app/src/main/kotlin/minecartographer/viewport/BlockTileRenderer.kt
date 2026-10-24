@@ -31,11 +31,12 @@ object BlockTileRenderer {
 
     fun render(blocks: ChunkBlocks, turns: Int, lod: Int, settings: RenderSettings, models: BlockModelSource): ChunkTile {
         val hs = settings.heightScale.toDouble()
+        val flat = settings.flat
         // One block of headroom: some models (fences, walls) reach a little above their block.
         val top = blocks.maxY + 2
         val base = blocks.minY
         val width = 32 * lod
-        val height = ceil((16 + (top - base) * hs) * lod).toInt() + 1
+        val height = if (flat) width else ceil((16 + (top - base) * hs) * lod).toInt() + 1
         val raster = Raster(width, height)
 
         val palette = blocks.palette
@@ -56,7 +57,23 @@ object BlockTileRenderer {
         // Faces nearest to the viewer first; for coplanar faces the later element (an overlay) wins.
         val order = Array(palette.size) { i -> frontToBack(blockModels[i].quads) }
 
-        val projection = Projection(lod, hs, top)
+        // From above, every column is lit from the north-west like the Map mode: its top against its neighbors'.
+        val relief = if (!flat) null else {
+            val tops = IntArray(256) { i ->
+                val lx = i and 15
+                val lz = i shr 4
+                var y = blocks.maxY
+                while (y > blocks.minY && blocks.index(lx, y, lz).let { it == 0 || blockModels[it].quads.isEmpty() }) y--
+                y
+            }
+            FloatArray(256) { i ->
+                val north = if (i >= 16) tops[i - 16] else tops[i]
+                val west = if (i and 15 != 0) tops[i - 1] else tops[i]
+                (1f + (2 * tops[i] - north - west) * 0.05f).coerceIn(0.75f, 1.2f)
+            }
+        }
+
+        val projection = Projection(lod, hs, top, flat)
         for (d in 30 downTo 0) {
             for (lx in maxOf(0, d - 15)..minOf(15, d)) {
                 val lz = d - lx
@@ -77,8 +94,8 @@ object BlockTileRenderer {
                         }
                     }
                     for (quad in quads) {
-                        // Faces turned away from the camera (down, north, west) are never seen.
-                        if (quad.nx + quad.ny / hs + quad.nz <= 1e-4) continue
+                        // Faces turned away from the camera (down, north, west) are never seen; from above only up faces are.
+                        if (if (flat) quad.ny <= 1e-4 else quad.nx + quad.ny / hs + quad.nz <= 1e-4) continue
                         if (quad.cull >= 0) {
                             val nx = lx + Dir.DX[quad.cull]
                             val ny = y + Dir.DY[quad.cull]
@@ -90,7 +107,7 @@ object BlockTileRenderer {
                                 if (n == -1 || occludes[n] || fluid[n]) continue
                             }
                         }
-                        val shade = shadeOf(quad) * (if (model.fluid) waterShade(depth) else 1f)
+                        val shade = shadeOf(quad) * (if (model.fluid) waterShade(depth) else 1f) * (relief?.get(lz * 16 + lx) ?: 1f)
                         val border = settings.chunkBorders && quad.ny > 0.99f &&
                             ((lx == 0 && quad.corners[0] == 0f) || (lz == 0 && quad.corners[2] == 0f))
                         raster.quad(projection, lx, y, lz, quad, shade, if (border) borderEdges(lx, lz, quad) else 0, opaque = model.fluid)
@@ -109,6 +126,7 @@ object BlockTileRenderer {
             maxHeight = top - 1,
             mask = mask,
             pixels = if (lod <= ChunkTileCache.MAX_BLOCK_LOD) pixels else null,
+            flat = flat,
         )
     }
 
@@ -144,10 +162,10 @@ object BlockTileRenderer {
     /** Deeper water is darker, matching the Map mode's water colors. */
     private fun waterShade(depth: Int): Float = 1f - 0.55f * ((depth.coerceIn(1, 16) - 1) / 15f)
 
-    /** Block coordinates (chunk-local, in view space) to image pixels. */
-    private class Projection(val lod: Int, val hs: Double, val top: Int) {
-        fun x(x: Float, z: Float) = (x - z + 16) * lod
-        fun y(x: Float, y: Float, z: Float) = (((x + z) / 2.0 - y * hs + top * hs) * lod).toFloat()
+    /** Block coordinates (chunk-local, in view space) to image pixels; [flat] looks straight down (2 units a block). */
+    private class Projection(val lod: Int, val hs: Double, val top: Int, val flat: Boolean) {
+        fun x(x: Float, z: Float) = if (flat) 2 * x * lod else (x - z + 16) * lod
+        fun y(x: Float, y: Float, z: Float) = if (flat) 2 * z * lod else (((x + z) / 2.0 - y * hs + top * hs) * lod).toFloat()
     }
 
     /** Premultiplied ARGB, composited "under" what is already there (front-to-back drawing). */

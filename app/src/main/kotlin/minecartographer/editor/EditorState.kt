@@ -329,6 +329,17 @@ class EditorState {
 
     fun setRenderMode(mode: RenderMode) = updateRenderSettings(renderSettings.copy(mode = mode))
 
+    /** Switches between the isometric view and the 2D view from above, keeping the same spot in the middle. */
+    fun setFlat(flat: Boolean) {
+        if (flat == renderSettings.flat) return
+        val wasFit = view == lastFitView
+        val hs = renderSettings.heightScale.toDouble()
+        val (x, z) = view.ground(view.centerU, view.centerV, SURFACE_Y, hs)
+        updateRenderSettings(renderSettings.copy(flat = flat))
+        view = IsoView.centeredOn(x, SURFACE_Y, z, hs, view.zoom, flat)
+        if (wasFit) fitToWorld()
+    }
+
     // ---- Textures ----
 
     /** Texture files picked per world id; worlds without an entry use the default ([TextureFiles.chosen]). */
@@ -1146,6 +1157,7 @@ class EditorState {
         "render-mode" to renderSettings.mode.name,
         "height-scale" to renderSettings.heightScale.toString(),
         "chunk-borders" to renderSettings.chunkBorders.toString(),
+        "flat" to renderSettings.flat.toString(),
         "layer-colors" to showLayerColors.toString(),
         "rotation" to rotation.toString(),
         "center-u" to view.centerU.toString(),
@@ -1170,6 +1182,7 @@ class EditorState {
             mode = s["render-mode"]?.let { m -> RenderMode.entries.firstOrNull { it.name == m } } ?: renderSettings.mode,
             heightScale = float("height-scale") ?: renderSettings.heightScale,
             chunkBorders = bool("chunk-borders") ?: renderSettings.chunkBorders,
+            flat = bool("flat") ?: renderSettings.flat,
         ))
         showLayerColors = bool("layer-colors") ?: showLayerColors
         s["rotation"]?.toIntOrNull()?.let { rotation = Rotation.normalize(it) }
@@ -1189,7 +1202,7 @@ class EditorState {
         val u = s["center-u"]?.toDoubleOrNull() ?: return
         val v = s["center-v"]?.toDoubleOrNull() ?: return
         val zoom = s["zoom"]?.toDoubleOrNull() ?: return
-        view = IsoView(u, v, zoom.coerceIn(IsoView.MIN_ZOOM, IsoView.MAX_ZOOM))
+        view = IsoView(u, v, zoom.coerceIn(IsoView.MIN_ZOOM, IsoView.MAX_ZOOM), flat = renderSettings.flat)
         fitPending = false
     }
 
@@ -1210,20 +1223,25 @@ class EditorState {
         }
         fitPending = false
         val hs = renderSettings.heightScale.toDouble()
-        val spanU = (bounds.maxX - bounds.minX + 1 + bounds.maxZ - bounds.minZ + 1) * 16.0
-        val spanV = spanU / 2 + 96 * hs
+        val flat = renderSettings.flat
+        val sizeX = bounds.maxX - bounds.minX + 1
+        val sizeZ = bounds.maxZ - bounds.minZ + 1
+        // From above a chunk is a 32-unit square; a quarter turn swaps which side is across the screen.
+        val spanU = if (flat) 32.0 * (if (rotation % 2 == 0) sizeX else sizeZ) else (sizeX + sizeZ) * 16.0
+        val spanV = if (flat) 32.0 * (if (rotation % 2 == 0) sizeZ else sizeX) else spanU / 2 + 96 * hs
         var zoom = minOf(viewportSize.width / spanU, viewportSize.height / spanV) * 0.92
         var centerX = bounds.centerBlockX
         var centerZ = bounds.centerBlockZ
-        // A chunk covers 256 square iso units, so this zoom keeps about MAX_CHUNKS_ON_FIT chunks on screen.
-        // Bigger worlds start around their spawn instead of rendering tens of thousands of chunks.
-        val budgetZoom = sqrt(viewportSize.width.toDouble() * viewportSize.height / (256.0 * MAX_CHUNKS_ON_FIT))
+        // A chunk covers 256 square iso units (1024 from above), so this zoom keeps about MAX_CHUNKS_ON_FIT chunks
+        // on screen. Bigger worlds start around their spawn instead of rendering tens of thousands of chunks.
+        val chunkArea = if (flat) 1024.0 else 256.0
+        val budgetZoom = sqrt(viewportSize.width.toDouble() * viewportSize.height / (chunkArea * MAX_CHUNKS_ON_FIT))
         if (zoom < budgetZoom) {
             zoom = budgetZoom
             activeWorld?.spawn?.let { (x, z) -> centerX = x.toDouble(); centerZ = z.toDouble() }
         }
         val (cx, cz) = Rotation.point(rotation, centerX, centerZ)
-        view = IsoView.centeredOn(cx, SURFACE_Y, cz, hs, zoom)
+        view = IsoView.centeredOn(cx, SURFACE_Y, cz, hs, zoom, flat)
         lastFitView = view
     }
 
@@ -1232,11 +1250,11 @@ class EditorState {
         val hs = renderSettings.heightScale.toDouble()
         val wasFit = view == lastFitView
         // Screen center on the surface plane, in rotated coordinates, then back to world coordinates.
-        val sum = 2 * (view.centerV + SURFACE_Y * hs)
-        val (wx, wz) = Rotation.point(4 - rotation, (sum + view.centerU) / 2, (sum - view.centerU) / 2)
+        val (vx, vz) = view.ground(view.centerU, view.centerV, SURFACE_Y, hs)
+        val (wx, wz) = Rotation.point(4 - rotation, vx, vz)
         rotation = Rotation.normalize(rotation + delta)
         val (rx, rz) = Rotation.point(rotation, wx, wz)
-        view = IsoView.centeredOn(rx, SURFACE_Y, rz, hs, view.zoom)
+        view = IsoView.centeredOn(rx, SURFACE_Y, rz, hs, view.zoom, view.flat)
         if (wasFit) lastFitView = view
         hovered = null
     }

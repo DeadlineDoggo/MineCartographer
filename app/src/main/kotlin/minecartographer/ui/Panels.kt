@@ -247,11 +247,17 @@ fun ViewPanel(state: EditorState) {
         SectionHeader("RENDER MODE", Modifier.padding(top = 0.dp))
         Segmented(RenderMode.entries, settings.mode, { it.label }) { state.setRenderMode(it) }
         Hint(settings.mode.description)
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Txt("View", Modifier.width(92.dp), color = EditorTheme.textDim, size = 12.sp)
+            Box(Modifier.weight(1f)) {
+                Segmented(listOf(false, true), settings.flat, { if (it) "2D" else "3D" }) { state.setFlat(it) }
+            }
+        }
 
         SectionHeader("DISPLAY")
         Checkbox("Chunk borders", settings.chunkBorders) { state.updateRenderSettings(settings.copy(chunkBorders = it)) }
         Checkbox("Layer colors and erased chunks", state.showLayerColors) { state.showLayerColors = it }
-        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (!settings.flat) Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Txt("Height", Modifier.width(92.dp), color = EditorTheme.textDim, size = 12.sp)
             Box(Modifier.weight(1f)) {
                 Segmented(listOf(0.5f, 1f, 1.5f, 2f), settings.heightScale, { "${it}×".replace(".0×", "×") }) {

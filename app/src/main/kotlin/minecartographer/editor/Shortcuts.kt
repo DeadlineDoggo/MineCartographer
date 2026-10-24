@@ -72,6 +72,7 @@ fun EditorState.handleKey(e: KeyEvent): Boolean {
         Key.One -> setRenderMode(RenderMode.Map)
         Key.Two -> setRenderMode(RenderMode.Blocks)
         Key.Three -> setRenderMode(RenderMode.Textured)
+        Key.V -> setFlat(!renderSettings.flat)
         Key.Comma -> rotate(-1)
         Key.Period -> rotate(+1)
         Key.Equals, Key.NumPadAdd -> zoomBy(1.25)

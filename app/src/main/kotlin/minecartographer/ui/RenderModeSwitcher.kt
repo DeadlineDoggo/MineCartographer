@@ -43,16 +43,73 @@ private val PREVIEW_SHAPE = RoundedCornerShape(6.dp)
 private val PANEL_BACKGROUND = Color(0xCC2B2D30)
 
 /**
- * Google Maps-like map type switcher for the viewport's bottom-left corner: a button showing the
- * current render mode, which slides out a tile per mode while hovered. Clicking the button itself
- * steps to the next mode.
+ * Google Maps-like map type switcher for the viewport's bottom-left corner: a 2D/3D button, then a button
+ * showing the current render mode, which slides out a tile per mode while hovered. Clicking the mode
+ * button itself steps to the next mode.
  */
 @Composable
 fun RenderModeSwitcher(state: EditorState, modifier: Modifier) {
+    Row(modifier, verticalAlignment = Alignment.Bottom) {
+        FlatButton(state)
+        Spacer(Modifier.width(8.dp))
+        ModeSwitcher(state)
+    }
+}
+
+/** Shows the view the click switches to, like the map/satellite button of a map app. */
+@Composable
+private fun FlatButton(state: EditorState) {
+    val flat = state.renderSettings.flat
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    WithTooltip(if (flat) "Switch to the 3D view (V)" else "Switch to the 2D view from above (V)") {
+        Column(
+            Modifier.size(52.dp).clip(PANEL_SHAPE)
+                .background(if (hovered) EditorTheme.panelRaised else PANEL_BACKGROUND)
+                .border(1.dp, if (hovered) EditorTheme.accent else EditorTheme.border, PANEL_SHAPE)
+                .hoverable(interaction)
+                .clickable(interaction, indication = null) { state.setFlat(!flat) },
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Canvas(Modifier.size(22.dp)) { if (flat) cubeIcon(EditorTheme.text) else squareIcon(EditorTheme.text) }
+            Spacer(Modifier.height(2.dp))
+            Txt(if (flat) "3D" else "2D", size = 11.sp, weight = FontWeight.SemiBold)
+        }
+    }
+}
+
+/** A wireframe cube, for "3D". */
+private fun DrawScope.cubeIcon(color: Color) {
+    val w = size.width
+    val u = w * 0.42f
+    val c = Offset(w / 2, w * 0.3f)
+    val h = w * 0.42f
+    val stroke = Stroke(width = 1.5f)
+    val l = Offset(c.x - u, c.y); val r = Offset(c.x + u, c.y)
+    val t = Offset(c.x, c.y - u / 2); val b = Offset(c.x, c.y + u / 2)
+    val down = Offset(0f, h)
+    for ((a, z) in listOf(l to t, t to r, r to b, b to l, l to l + down, b to b + down, r to r + down, l + down to b + down, b + down to r + down)) {
+        drawLine(color, a, z, strokeWidth = stroke.width)
+    }
+}
+
+/** A square split into four, for "2D". */
+private fun DrawScope.squareIcon(color: Color) {
+    val w = size.width
+    val m = w * 0.14f
+    drawRect(color, Offset(m, m), androidx.compose.ui.geometry.Size(w - 2 * m, w - 2 * m), style = Stroke(width = 1.5f))
+    drawLine(color, Offset(w / 2, m), Offset(w / 2, w - m), strokeWidth = 1.5f)
+    drawLine(color, Offset(m, w / 2), Offset(w - m, w / 2), strokeWidth = 1.5f)
+}
+
+@Composable
+private fun ModeSwitcher(state: EditorState) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val current = state.renderSettings.mode
-    Row(modifier.hoverable(interaction), verticalAlignment = Alignment.Bottom) {
+    val flat = state.renderSettings.flat
+    Row(Modifier.hoverable(interaction), verticalAlignment = Alignment.Bottom) {
         val buttonInteraction = remember { MutableInteractionSource() }
         val buttonHovered by buttonInteraction.collectIsHoveredAsState()
         Row(
@@ -66,7 +123,7 @@ fun RenderModeSwitcher(state: EditorState, modifier: Modifier) {
                 .padding(start = 5.dp, end = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ModePreview(current, Modifier.size(42.dp).clip(PREVIEW_SHAPE))
+            ModePreview(current, flat, Modifier.size(42.dp).clip(PREVIEW_SHAPE))
             Spacer(Modifier.width(10.dp))
             Column {
                 Txt("Render", color = EditorTheme.textDim, size = 10.sp)
@@ -85,7 +142,7 @@ fun RenderModeSwitcher(state: EditorState, modifier: Modifier) {
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 for ((i, mode) in RenderMode.entries.withIndex()) {
-                    ModeTile(mode, "${i + 1}", selected = mode == current) { state.setRenderMode(mode) }
+                    ModeTile(mode, "${i + 1}", flat, selected = mode == current) { state.setRenderMode(mode) }
                 }
             }
         }
@@ -93,7 +150,7 @@ fun RenderModeSwitcher(state: EditorState, modifier: Modifier) {
 }
 
 @Composable
-private fun ModeTile(mode: RenderMode, key: String, selected: Boolean, onClick: () -> Unit) = WithTooltip("${mode.description} ($key)") {
+private fun ModeTile(mode: RenderMode, key: String, flat: Boolean, selected: Boolean, onClick: () -> Unit) = WithTooltip("${mode.description} ($key)") {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     Column(
@@ -106,6 +163,7 @@ private fun ModeTile(mode: RenderMode, key: String, selected: Boolean, onClick: 
     ) {
         ModePreview(
             mode,
+            flat,
             Modifier.size(48.dp).clip(PREVIEW_SHAPE).border(
                 if (selected) 2.dp else 1.dp,
                 when {
@@ -122,7 +180,7 @@ private fun ModeTile(mode: RenderMode, key: String, selected: Boolean, onClick: 
     }
 }
 
-// ---- Previews: a tiny iso scene drawn the way each mode draws chunks ----
+// ---- Previews: a tiny scene drawn the way each mode draws chunks, in iso or from above ----
 
 private val Grass = Color(0xFF6DAA45)
 private val Sand = Color(0xFFDBCB8E)
@@ -139,11 +197,38 @@ private fun topColor(height: Int) = when (height) {
 }
 
 @Composable
-private fun ModePreview(mode: RenderMode, modifier: Modifier) = Canvas(modifier.background(EditorTheme.viewportBackground)) {
-    when (mode) {
-        RenderMode.Map -> patch(outlined = false)
-        RenderMode.Blocks -> patch(outlined = true)
-        RenderMode.Textured -> texturedBlock()
+private fun ModePreview(mode: RenderMode, flat: Boolean, modifier: Modifier) = Canvas(modifier.background(EditorTheme.viewportBackground)) {
+    when {
+        flat && mode == RenderMode.Textured -> texturedTop()
+        flat -> flatPatch(outlined = mode == RenderMode.Blocks)
+        mode == RenderMode.Map -> patch(outlined = false)
+        mode == RenderMode.Blocks -> patch(outlined = true)
+        else -> texturedBlock()
+    }
+}
+
+/** The 3x3 patch from above: one square per column, lit like the 2D map. */
+private fun DrawScope.flatPatch(outlined: Boolean) {
+    val cell = size.width / 4
+    val o = (size.width - 3 * cell) / 2
+    for (x in 0..2) for (z in 0..2) {
+        val h = HEIGHTS[x][z]
+        val north = if (z > 0) HEIGHTS[x][z - 1] else h
+        val color = topColor(h).shade((1f + (h - north) * 0.12f).coerceIn(0.8f, 1.15f))
+        val tl = Offset(o + x * cell, o + z * cell)
+        quad(color, tl, tl + Offset(cell, 0f), tl + Offset(cell, cell), tl + Offset(0f, cell), if (outlined) Color(0x66000000) else null)
+    }
+}
+
+/** A grass block's top from above, pixel-art like Minecraft's texture. */
+private fun DrawScope.texturedTop() {
+    val n = 6
+    val cell = size.width * 0.75f / n
+    val o = (size.width - n * cell) / 2
+    for (i in 0 until n) for (j in 0 until n) {
+        val noise = ((i * 73 + j * 151) * 2654435761L ushr 7 and 7).toFloat() / 7f
+        val tl = Offset(o + i * cell, o + j * cell)
+        quad(Grass.shade(0.85f + 0.2f * noise), tl, tl + Offset(cell, 0f), tl + Offset(cell, cell), tl + Offset(0f, cell))
     }
 }
 

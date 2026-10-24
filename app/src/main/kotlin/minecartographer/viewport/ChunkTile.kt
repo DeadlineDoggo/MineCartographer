@@ -26,6 +26,8 @@ data class RenderSettings(
     val heightScale: Float = 1f,
     val chunkBorders: Boolean = true,
     val mode: RenderMode = RenderMode.Map,
+    /** Straight from above (2D) instead of the isometric view; works with every [mode]. */
+    val flat: Boolean = false,
 )
 
 /**
@@ -46,14 +48,16 @@ class ChunkTile(
     private val mask: BitSet,
     /** Premultiplied ARGB, row by row; null when not kept. */
     val pixels: IntArray?,
+    /** Drawn from above: a square of 32 x 32 units, see [IsoView.flat]. */
+    val flat: Boolean = false,
 ) : AutoCloseable {
     val width: Int get() = image.width
     val height: Int get() = image.height
     val byteSize: Long get() = width.toLong() * height * (if (pixels != null) 8 else 4)
 
     /** Iso coordinates of the image's top-left corner when drawn at [pos]. */
-    fun originU(pos: ChunkPos) = 16.0 * (pos.x - pos.z) - 16
-    fun originV(pos: ChunkPos, hs: Double) = 8.0 * (pos.x + pos.z) - (maxHeight + 1) * hs
+    fun originU(pos: ChunkPos) = if (flat) 32.0 * pos.x else 16.0 * (pos.x - pos.z) - 16
+    fun originV(pos: ChunkPos, hs: Double) = if (flat) 32.0 * pos.z else 8.0 * (pos.x + pos.z) - (maxHeight + 1) * hs
 
     /** True when the pixel at ([px], [py]) belongs to this chunk (pixel-exact picking). */
     fun hit(px: Int, py: Int) = px in 0 until width && py in 0 until height && mask[py * width + px]
@@ -74,6 +78,7 @@ object ChunkTileRenderer {
     private const val BORDER_COLOR = 0x48000000
 
     fun render(surface: ChunkSurface, lod: Int, settings: RenderSettings): ChunkTile {
+        if (settings.flat) return renderFlat(surface, lod, settings)
         val hs = settings.heightScale.toDouble()
         val top = surface.maxHeight + 1
         val base = surface.minHeight - SKIRT
@@ -137,6 +142,41 @@ object ChunkTileRenderer {
             maxHeight = surface.maxHeight,
             mask = mask,
             pixels = if (lod <= ChunkTileCache.MAX_BLOCK_LOD) pixels else null,
+        )
+    }
+
+    /**
+     * The 2D view: every column as a square of its top color, like a Minecraft map, lit from the north-west:
+     * brighter where the column is higher than its neighbors there, darker where it is lower.
+     */
+    private fun renderFlat(surface: ChunkSurface, lod: Int, settings: RenderSettings): ChunkTile {
+        val size = 32 * lod
+        val cell = 2f * lod
+        val raster = Raster(size, size)
+        for (lz in 0..15) for (lx in 0..15) {
+            val h = surface.height(lx, lz)
+            val north = if (lz > 0) surface.height(lx, lz - 1) else h
+            val west = if (lx > 0) surface.height(lx - 1, lz) else h
+            val relief = (1f + (2 * h - north - west) * 0.05f).coerceIn(0.75f, 1.2f)
+            val x = lx * cell
+            val y = lz * cell
+            raster.fillQuad(x, y, x + cell, y, x + cell, y + cell, x, y + cell, shade(surface.color(lx, lz), relief))
+        }
+        if (settings.chunkBorders) {
+            raster.line(0.5f, 0f, 0.5f, size.toFloat(), BORDER_COLOR)
+            raster.line(1f, 0.5f, size.toFloat(), 0.5f, BORDER_COLOR)
+        }
+        val pixels = raster.pixels
+        val mask = BitSet(pixels.size)
+        for (i in pixels.indices) if (pixels[i] ushr 24 != 0) mask.set(i)
+        return ChunkTile(
+            lod = lod,
+            image = imageOf(pixels, size, size),
+            minHeight = surface.minHeight,
+            maxHeight = surface.maxHeight,
+            mask = mask,
+            pixels = if (lod <= ChunkTileCache.MAX_BLOCK_LOD) pixels else null,
+            flat = true,
         )
     }
 
