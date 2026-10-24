@@ -72,6 +72,7 @@ fun EditorShell(state: EditorState, onExit: () -> Unit) {
         LoadingLayer(state, visible = state.startingUp, fullWindow = true)
     }
     ExportDialog(state)
+    BlockTexturesDialog(state)
 }
 
 @Composable

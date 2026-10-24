@@ -22,7 +22,16 @@ class ForgeData(
     val mods: List<ModInfo>,
     /** Block id -> name for modded ids (vanilla ids keep the built-in table); empty for [Generation.NAMED]. */
     val blockNames: Map<Int, String>,
+    /**
+     * For 1.6 worlds, what level.dat says about each modded id beyond its name: the mod id as Forge knows it,
+     * the unlocalized name and the item class. 1.6 mods name their textures only in code, so these are the
+     * clues for finding them.
+     */
+    val legacyBlocks: Map<Int, LegacyBlock> = emptyMap(),
 ) {
+    /** One `FML.ModItemData` entry of a modded block id (1.6). */
+    data class LegacyBlock(val id: Int, val name: String, val modId: String, val forcedName: String, val itemClass: String)
+
     enum class Generation(val label: String) {
         NUMERIC_ITEM_DATA("Forge 1.6 – 1.7"),
         NUMERIC_REGISTRY("Forge 1.8 – 1.12"),
@@ -48,14 +57,17 @@ class ForgeData(
                 val mods = mods(fml.list("ModList")?.compounds())
                 fml.list("ModItemData")?.let { entries ->
                     val names = HashMap<Int, String>()
+                    val legacy = HashMap<Int, LegacyBlock>()
                     for (e in entries.compounds()) {
                         val id = e.int("ItemId") ?: continue
                         val mod = e.string("ModId") ?: continue
                         // Vanilla ids have fixed meanings that LegacyBlocks knows in more detail.
                         if (mod == "Minecraft" || id !in 1 until MAX_ID) continue
-                        names[id] = name(mod, e.string("ForcedName").orEmpty(), id)
+                        val forced = e.string("ForcedName").orEmpty()
+                        names[id] = name(mod, forced, id)
+                        legacy[id] = LegacyBlock(id, names.getValue(id), mod, forced, e.string("ItemType").orEmpty())
                     }
-                    return ForgeData(Generation.NUMERIC_ITEM_DATA, mods, names)
+                    return ForgeData(Generation.NUMERIC_ITEM_DATA, mods, names, legacy)
                 }
                 fml.list("ItemData")?.let { entries ->
                     val names = HashMap<Int, String>()

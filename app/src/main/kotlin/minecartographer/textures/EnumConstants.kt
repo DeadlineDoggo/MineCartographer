@@ -130,7 +130,7 @@ object EnumConstants {
     }
 
     /** Bytes taken by the instruction at [p] (JVM spec, chapter 6). */
-    private fun instructionLength(code: ByteArray, p: Int, codeStart: Int): Int {
+    internal fun instructionLength(code: ByteArray, p: Int, codeStart: Int): Int {
         fun s4(at: Int) = ((code[at].toInt() and 0xFF) shl 24) or ((code[at + 1].toInt() and 0xFF) shl 16) or
             ((code[at + 2].toInt() and 0xFF) shl 8) or (code[at + 3].toInt() and 0xFF)
         return when (val op = code[p].toInt() and 0xFF) {

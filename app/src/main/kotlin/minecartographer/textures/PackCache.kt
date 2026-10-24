@@ -40,6 +40,9 @@ class PackCache private constructor(val dir: Path, val files: List<Path>) {
     /** Variant a data value stands for, by block key: `property=value`, or empty when the data value picks nothing. */
     val variants = ConcurrentHashMap<String, String>()
 
+    /** Textures chosen for 1.6 blocks by name: their variants and the clue that won (see [LegacyTextures]). */
+    val legacy = ConcurrentHashMap<String, LegacyTextures.Choice>()
+
     private val textures = ConcurrentHashMap<String, Texture>()
     @Volatile private var dirty = false
 
@@ -58,6 +61,10 @@ class PackCache private constructor(val dir: Path, val files: List<Path>) {
     fun putLook(key: String, look: BlockLook?) {
         looks[key] = look ?: NO_LOOK
         dirty = true
+    }
+
+    fun putLegacy(name: String, choice: LegacyTextures.Choice) {
+        if (legacy.put(name, choice) != choice) dirty = true
     }
 
     fun putVariant(key: String, variant: String) {
@@ -81,6 +88,12 @@ class PackCache private constructor(val dir: Path, val files: List<Path>) {
                 for ((key, look) in looks) { out.writeUTF(key); out.writeByte(look.kind.ordinal); out.writeInt(look.color) }
                 out.writeInt(variants.size)
                 for ((key, variant) in variants) { out.writeUTF(key); out.writeUTF(variant) }
+                out.writeInt(legacy.size)
+                for ((name, c) in legacy) {
+                    out.writeUTF(name); out.writeUTF(c.source); out.writeInt(c.score)
+                    out.writeInt(c.variants.size)
+                    for (v in c.variants) { out.writeUTF(v.top); out.writeUTF(v.side) }
+                }
             }
             write(dir.resolve("textures.bin")) { out ->
                 out.writeInt(textures.size)
@@ -108,6 +121,13 @@ class PackCache private constructor(val dir: Path, val files: List<Path>) {
                     looks[key] = if (kind == BlockKind.SKIP && color == NO_LOOK.color) NO_LOOK else BlockLook(kind, color)
                 }
                 repeat(input.readInt()) { variants[input.readUTF()] = input.readUTF() }
+                repeat(input.readInt()) {
+                    val name = input.readUTF()
+                    val source = input.readUTF()
+                    val score = input.readInt()
+                    val vs = List(input.readInt()) { LegacyTextures.Variant(input.readUTF(), input.readUTF()) }
+                    legacy[name] = LegacyTextures.Choice(vs, source, score)
+                }
             }
             read(dir.resolve("textures.bin")) { input ->
                 repeat(input.readInt()) {
@@ -120,7 +140,7 @@ class PackCache private constructor(val dir: Path, val files: List<Path>) {
             }
         }.onFailure {
             // A broken or older cache is just ignored and rebuilt.
-            index = null; looks.clear(); variants.clear(); textures.clear()
+            index = null; looks.clear(); variants.clear(); legacy.clear(); textures.clear()
         }
         // Touch the folder so pruning knows it is in use.
         runCatching { Files.setLastModifiedTime(dir, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis())) }
@@ -139,7 +159,7 @@ class PackCache private constructor(val dir: Path, val files: List<Path>) {
 
     companion object {
         /** Bumped whenever what is stored, or how it is computed, changes; old caches are then not used. */
-        const val FORMAT = 1
+        const val FORMAT = 2
         private const val MAX_CACHED_TEXTURE = 64
         private const val PRUNE_AFTER_DAYS = 60L
 

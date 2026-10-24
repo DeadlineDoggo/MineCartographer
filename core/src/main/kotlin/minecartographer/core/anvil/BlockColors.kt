@@ -46,6 +46,12 @@ object BlockColors {
     /** The look learned for a name or `name[meta=n]` key, if any. */
     fun learnedLook(key: String): BlockLook? = learned[key]
 
+    /** Drops what was learned for [key], so it is guessed (and wanted) again. */
+    fun unlearn(key: String) {
+        learned.remove(key)
+        cache.remove(key)
+    }
+
     /** Uses [look] for [name] from now on (chunks read before keep their colors until read again). */
     fun learn(name: String, look: BlockLook) {
         learned[name] = look

@@ -4,6 +4,7 @@ import minecartographer.core.BlockState
 import minecartographer.core.Rotation
 import minecartographer.core.anvil.BlockColors
 import minecartographer.core.anvil.BlockLook
+import minecartographer.core.anvil.ForgeData
 import minecartographer.core.anvil.BlockKind
 import java.io.ByteArrayInputStream
 import java.io.Closeable
@@ -62,11 +63,16 @@ class Texture(val size: Int, private val levels: List<IntArray>, val opaque: Boo
 
     companion object {
         /** Animated textures are vertical strips of frames; the first frame is used. */
-        fun decode(png: ByteArray): Texture? {
+        /**
+         * Animated textures are vertical strips of frames; the first frame is used. Some 1.6 mods (Railcraft) put a
+         * block's variants side by side in one wide strip instead; [frame] picks one of those.
+         */
+        fun decode(png: ByteArray, frame: Int = 0): Texture? {
             val image = ImageIO.read(ByteArrayInputStream(png)) ?: return null
-            val size = image.width
-            if (size == 0 || image.height < size) return null
-            val argb = image.getRGB(0, 0, size, size, null, 0, size)
+            val size = minOf(image.width, image.height)
+            if (size == 0) return null
+            val frames = if (image.width > image.height && image.width % image.height == 0) image.width / image.height else 1
+            val argb = image.getRGB(Math.floorMod(frame, frames) * size, 0, size, size, null, 0, size)
             var opaque = true
             val base = IntArray(argb.size) { i ->
                 val c = argb[i]
@@ -226,6 +232,9 @@ class AssetSource(val files: List<Path>, cachedIndex: Map<String, Int>? = null) 
 
     fun has(path: String) = path in index
 
+    /** The archive at [i] in [files], opened when first asked (class scans of 1.6 mods read their classes). */
+    internal fun zipAt(i: Int): ZipFile = zip(i)
+
     /** Asset namespaces present (`minecraft`, mod ids...). */
     val namespaces: Set<String> = index.keys.mapTo(HashSet()) { it.substring(7, it.indexOf('/', 7).coerceAtLeast(7)) }
 
@@ -275,6 +284,82 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
         return rotated[t].getOrPut(state) { base.rotated(t) }
     }
 
+    // ---- 1.6 blocks: no blockstates, textures guessed from clues (LegacyTextures), and the user's own choices ----
+
+    private val legacyBlocks = ConcurrentHashMap<String, Pair<ForgeData.LegacyBlock, List<String>>>()
+    private val legacyTextures by lazy { LegacyTextures(assets) }
+
+    /** Texture chosen by the user, by block key (`ns:name[meta=n]`, or `ns:name` for every data value). Wins over everything. */
+    val overrides = ConcurrentHashMap<String, String>()
+
+    /** True when this pack can say something about [key] (`ns:name` or `ns:name[meta=n]`) without a blockstate. */
+    fun knows(key: String): Boolean {
+        val name = BlockColors.stateOf(key).name
+        return legacyBlocks.containsKey(name) || overrides.containsKey(key) || overrides.containsKey(name)
+    }
+
+    /** True when the user picked a texture for [key] (`ns:name[meta=n]`) or its whole block. */
+    fun isOverridden(key: String) = overrides.containsKey(key) || overrides.containsKey(BlockColors.stateOf(key).name)
+
+    /** Where [state]'s look comes from, for the block textures dialog. */
+    fun describe(state: BlockState): String {
+        val (ns, path) = split(state.name)
+        if (isOverridden(BlockColors.keyOf(state.name, state.properties["meta"] ?: "0")) || overrides.containsKey(state.name)) {
+            return "your choice: " + (textureChoice(state)?.top ?: "?")
+        }
+        if (blockstate(ns, path) != null) return "blockstate" + (variantOf(state).properties.entries.firstOrNull { it.key != "meta" }?.let { " (${it.key}=${it.value})" } ?: "")
+        return textureChoice(state)?.let { "${it.top} · ${it.source}" } ?: "guessed from the name"
+    }
+
+    /** Makes these 1.6 blocks (and their keys in the mods' config files) known, so their textures can be guessed. */
+    fun registerLegacy(blocks: Collection<ForgeData.LegacyBlock>, configKeys: Map<Int, List<String>>) {
+        for (b in blocks) legacyBlocks.putIfAbsent(b.name, b to configKeys[b.id].orEmpty())
+    }
+
+    /** What a block is drawn with when not from a blockstate: top and side texture ids, and where they come from. */
+    data class TextureChoice(val top: String, val side: String, val source: String)
+
+    /** The user's choice for [state], else for a registered 1.6 block the best guess; null otherwise. */
+    fun textureChoice(state: BlockState): TextureChoice? {
+        val meta = state.properties["meta"]
+        (meta?.let { overrides[BlockColors.keyOf(state.name, it)] } ?: overrides[state.name])?.let {
+            val id = textureId(it)
+            return TextureChoice(id, id, "your choice")
+        }
+        val (block, keys) = legacyBlocks[state.name] ?: return null
+        val choice = cache?.legacy?.get(state.name) ?: legacyTextures.choose(block, keys)?.also { cache?.putLegacy(state.name, it) } ?: return null
+        val v = choice.variant(meta?.toIntOrNull() ?: 0)
+        return TextureChoice(textureId(v.top), textureId(v.side), "${choice.source} (${choice.score})")
+    }
+
+    /** `extrabiomesxl:leavesfirfancy` (a 1.6 icon name) -> `extrabiomesxl:blocks/leavesfirfancy`; full ids pass through. */
+    private fun textureId(icon: String): String {
+        val (ns, path) = split(icon)
+        return if (path.startsWith("blocks/") || path.startsWith("block/")) "$ns:$path" else "$ns:blocks/$path"
+    }
+
+    private fun isPlant(texture: String) = PLANT_WORDS.any { it in texture.lowercase() }
+
+    /** Look from a [TextureChoice]: the top texture's color, nothing for plants, biome color for gray leaves. */
+    private fun lookOf(choice: TextureChoice): BlockLook? {
+        if (isPlant(choice.top)) return BlockLook.SKIP
+        val texture = texture(choice.top) ?: return null
+        val rgb = texture.averageRgb ?: return BlockLook.SKIP // nearly see-through (clear glass): look further down
+        val leaves = "leaves" in choice.top.lowercase() || "leaf" in choice.top.lowercase()
+        return BlockColors.solidLook(if (leaves && isGrayish(rgb)) multiply(rgb, Tints.FOLIAGE) else rgb)
+    }
+
+    /** A cube with the chosen textures (or nothing for plants), for blocks without a blockstate. */
+    private fun cubeOf(choice: TextureChoice): BlockModel? {
+        if (isPlant(choice.top)) return BlockModel.EMPTY
+        val top = texture(choice.top) ?: return null
+        val side = texture(choice.side) ?: top
+        val leaves = "leaves" in choice.top.lowercase()
+        val tint = if (leaves && top.averageRgb?.let(::isGrayish) == true) Tints.FOLIAGE else -1
+        return BlockModel.cube(top.averageRgb ?: 0x808080, occludes = top.opaque && !leaves, fluid = false,
+            texture = { dir -> if (dir == Dir.UP || dir == Dir.DOWN) top else side }, tint = tint)
+    }
+
     /** Drops cached models of blocks whose fallback color was learned since. */
     fun forget(names: Set<String>) {
         unrotated.keys.removeIf { it.name in names }
@@ -288,7 +373,9 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
      */
     fun mapLook(state: BlockState): BlockLook? {
         val (ns, path) = split(state.name)
-        val json = blockstate(ns, path) ?: return null
+        val overridden = state.properties["meta"]?.let { overrides[BlockColors.keyOf(state.name, it)] } ?: overrides[state.name]
+        if (overridden != null) return textureChoice(state)?.let(::lookOf)
+        val json = blockstate(ns, path) ?: return textureChoice(state)?.let(::lookOf)
         val textures = LinkedHashMap<String, String>()
         for (part in parts(expandMeta(state, json), json, firstOnly = true)) {
             part.model?.let { resolve(it) }?.textures?.forEach { (k, v) -> textures.putIfAbsent(k, v) }
@@ -337,8 +424,10 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
 
     fun texture(id: String): Texture? = textures.getOrPut(id) {
         cache?.texture(id)?.let { return@getOrPut Optional(it) }
-        val (ns, path) = split(id)
-        val decoded = assets.read("assets/$ns/textures/$path.png")?.let { runCatching { Texture.decode(it) }.getOrNull() }
+        // `ns:path#2` is the third frame of a strip of variants (see LegacyTextures).
+        val (ns, path) = split(id.substringBefore('#'))
+        val frame = id.substringAfter('#', "0").toIntOrNull() ?: 0
+        val decoded = assets.read("assets/$ns/textures/$path.png")?.let { runCatching { Texture.decode(it, frame) }.getOrNull() }
         decoded?.let { cache?.putTexture(id, it) }
         Optional(decoded)
     }.value
@@ -351,7 +440,9 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
         if (path == "lava" || path == "flowing_lava") return fluid("block/lava_still", -1)
 
         val (ns, _) = split(state.name)
-        val json = blockstate(ns, path) ?: return null
+        val overridden = state.properties["meta"]?.let { overrides[BlockColors.keyOf(state.name, it)] } ?: overrides[state.name]
+        if (overridden != null) return textureChoice(state)?.let(::cubeOf)
+        val json = blockstate(ns, path) ?: return textureChoice(state)?.let(::cubeOf)
         val parts = parts(expandMeta(state, json), json, firstOnly = false)
         if (parts.isEmpty()) return null
 
@@ -557,6 +648,9 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
             "facing", "axis", "rotation", "half", "shape", "direction", "hinge", "attached", "connected", "in_wall",
             "north", "south", "east", "west", "up", "down",
         )
+
+        /** Texture names of plants: drawn as nothing rather than as a cube (1.6 blocks have no cross models). */
+        private val PLANT_WORDS = listOf("sapling", "flower", "tallgrass", "cattail", "reed", "mushroom", "crops/")
 
         /** Texture variables that show the top of a block, best first. */
         private val TOP_TEXTURES = listOf("top", "up", "end", "all", "texture", "side", "particle")

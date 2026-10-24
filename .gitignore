@@ -13,6 +13,7 @@ local.properties
 
 # Local scratch and notes, never committed
 /garbage/
+/README_files/
 
 # Minecraft saves used for local testing (see MINECARTOGRAPHER_WORLDS in the README)
 /worlds/

@@ -44,6 +44,7 @@ import minecartographer.textures.BlockModels
 import minecartographer.textures.TextureFiles
 import minecartographer.textures.ModLocator
 import minecartographer.textures.PackCache
+import minecartographer.textures.LegacyTextures
 import minecartographer.textures.FlatModels
 import minecartographer.core.anvil.ModInfo
 import minecartographer.core.anvil.BlockColors
@@ -388,9 +389,57 @@ class EditorState {
         refreshTextures(force = true)
     }
 
+    /**
+     * Searches [root] (a drive or a backup folder) for the mods of [world] in the background and adds the `mods`
+     * folders that provide the most of them; remembered like [addModFolder].
+     */
+    fun searchMods(world: AnvilWorld, root: Path) {
+        if (busy) return notify("Wait for the current task to finish", warning = true)
+        busy = true
+        val title = "Searching for mods of ${world.name}"
+        loading = LoadingStep(title, "Looking for mods folders in $root", waitForTiles = false)
+        val known = texturesOf(world).mods
+        val throttle = ProgressThrottle()
+        scope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                ModLocator.search(world, root, known, progress = { folders, read ->
+                    if (throttle.ready(false)) scope.launch(Dispatchers.Main) {
+                        if (busy) loading = LoadingStep(title, if (read == 0) "$folders mods folders found" else "Reading mods folder $read / $folders",
+                            if (read == 0) null else read.toFloat() / folders, waitForTiles = false)
+                    }
+                })
+            }
+            val after = result.getOrNull()?.let { ModLocator.locate(world, known, ModLocator.folders + it) }
+            ModLocator.saveArchives()
+            withContext(Dispatchers.Main) {
+                busy = false
+                loading = null
+                result.onSuccess { folders ->
+                    val mods = world.info.forge?.playedMods.orEmpty()
+                    if (folders.isEmpty()) {
+                        notify("No mods of \"${world.name}\" found under $root", warning = true)
+                    } else {
+                        ModLocator.folders = ModLocator.folders + folders
+                        missingNotified.clear()
+                        notify("Found ${mods.size - (after?.missing?.size ?: 0)} of ${mods.size} mods in ${folders.size} folder" +
+                            (if (folders.size == 1) "" else "s") + ": " + folders.joinToString { it.toString() })
+                        refreshTextures(force = true)
+                    }
+                }.onFailure { notify("Searching for mods failed: ${it.message}", warning = true) }
+            }
+        }
+    }
+
+    /** Stops searching the folders added before for mods. */
+    fun forgetModFolders() {
+        ModLocator.folders = emptyList()
+        refreshTextures(force = true)
+    }
+
     /** Searches [folder] for mods of every world from now on (it is remembered across sessions). */
     fun addModFolder(folder: Path) {
-        ModLocator.folders = ModLocator.folders + folder.toAbsolutePath().normalize()
+        // listOf: a Path is an Iterable of its parts, so `list + path` would add "H:", "Games", ... instead.
+        ModLocator.folders = ModLocator.folders + listOf(folder.toAbsolutePath().normalize())
         missingNotified.clear()
         refreshTextures(force = true)
     }
@@ -438,6 +487,16 @@ class EditorState {
                     }.onFailure { it.printStackTrace() }.getOrNull()?.also { textureSets[l.files] = it }
                     set?.let { models[id] = it.second }
                 }
+                // 1.6 worlds: their blocks and the mods' config files are the clues for guessing textures.
+                for (w in wanted) {
+                    val m = models[w.world.id] ?: continue
+                    val anvil = w.world as? AnvilWorld
+                    val legacy = anvil?.info?.forge?.legacyBlocks.orEmpty()
+                    if (anvil != null && legacy.isNotEmpty()) {
+                        m.registerLegacy(legacy.values, LegacyTextures.configKeys(configFolders(anvil, loaded[w.world.id]?.mods.orEmpty())))
+                    }
+                    m.overrides.putAll(w.picked.blocks)
+                }
                 val applied = withContext(Dispatchers.Main) {
                     if (request != textureRequest) return@withContext false
                     tiles.textures = models
@@ -455,7 +514,7 @@ class EditorState {
                             val (w, mods) = missing
                             missingNotified += w.id
                             notify("${mods.size} mods of \"${w.name}\" not found (${mods.take(4).joinToString { it.id }}${if (mods.size > 4) ", …" else ""}). " +
-                                "Add their folder in the inspector.", warning = true)
+                                "View tab, Mods: Search for mods… or Add mod folder…", warning = true)
                         }
                     }
                     true
@@ -476,6 +535,55 @@ class EditorState {
                 }
             }
         }
+    }
+
+    /** `config` folders next to the `mods` folders the archives came from, and the save's own instance. */
+    private fun configFolders(world: AnvilWorld, archives: List<Path>): List<Path> {
+        val mods = archives.mapNotNull { a -> generateSequence(a.parent) { it.parent }.take(3).firstOrNull { it.fileName?.toString().equals("mods", true) } }
+        val instance = world.folder.toAbsolutePath().normalize().parent?.takeIf { it.fileName?.toString().equals("saves", true) }?.parent
+        return (mods.mapNotNull { it.parent?.resolve("config") } + listOfNotNull(instance?.resolve("config"), world.folder.parent?.resolve("config"))).distinct()
+    }
+
+    /** Modded block keys (`ns:name[meta=n]`) colors were looked up for, for the block textures dialog. */
+    val seenModdedKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** Shown by the block textures dialog. */
+    var blockTexturesDialogVisible by mutableStateOf(false)
+
+    /** The pack [world] is drawn with, once its textures are loaded. */
+    fun modelsOf(world: WorldSource): BlockModels? = tiles.textures[world.id] as? BlockModels
+
+    /** Modded block keys seen in [world] so far, sorted. */
+    fun moddedKeysOf(world: WorldSource): List<String> {
+        val forge = (world as? AnvilWorld)?.info?.forge ?: return emptyList()
+        val names = forge.blockNames.values.toSet()
+        val mods = forge.playedMods.mapTo(HashSet()) { it.id.lowercase() }
+        val packNamespaces = modelsOf(world)?.assets?.namespaces.orEmpty()
+        return seenModdedKeys.filter { key ->
+            val name = BlockColors.stateOf(key).name
+            if (forge.numericIds) name in names else name.substringBefore(':').let { it in mods || it in packNamespaces }
+        }.sorted()
+    }
+
+    /**
+     * Uses [texture] (a texture id like `extrabiomesxl:leavesfirfancy`) for the block [key] of [world], or the guess
+     * again when null. Saved with the project; the world is redrawn.
+     */
+    fun setBlockTexture(world: WorldSource, key: String, texture: String?) {
+        val current = worldTextures[world.id] ?: WorldTextures()
+        val value = texture?.trim()?.takeIf { it.isNotEmpty() }
+        worldTextures[world.id] = current.copy(blocks = if (value == null) current.blocks - key else current.blocks + (key to value))
+        changed()
+        val base = BlockColors.stateOf(key).name
+        modelsOf(world)?.let { m ->
+            if (value == null) m.overrides.remove(key) else m.overrides[key] = value
+            m.cache?.looks?.remove(key)
+            m.forget(setOf(base))
+        }
+        FlatModels.forget(setOf(base))
+        BlockColors.unlearn(key)
+        retryColors += key
+        tiles.reloadWorlds(setOf(world.id))
     }
 
     /** Worlds already warned about missing mods in this session. */
@@ -534,15 +642,18 @@ class EditorState {
                 if (names.isEmpty()) continue
                 val packs = textureLock.withLock { textureSets.values.map { it.second } }
                 val learned = HashSet<String>()
+                seenModdedKeys += names
                 for (name in names) {
                     val ns = name.substringBefore(':')
-                    val candidates = packs.filter { ns in it.assets.namespaces }
+                    // 1.6 blocks are named after the mod id (tconstruct:...), their textures live elsewhere (tinker:...).
+                    val candidates = packs.filter { ns in it.assets.namespaces || it.knows(name) }
                     val cached = candidates.firstNotNullOfOrNull { it.cache?.looks?.get(name) }
                     val look = when {
                         cached === PackCache.NO_LOOK -> null
                         cached != null -> cached
                         else -> candidates.firstNotNullOfOrNull { p ->
-                            runCatching { p.mapLook(BlockColors.stateOf(name)) }.getOrNull()?.also { p.cache?.putLook(name, it) }
+                            // A user's choice belongs to one world, not to the cache shared by every world using these files.
+                            runCatching { p.mapLook(BlockColors.stateOf(name)) }.getOrNull()?.also { if (!p.isOverridden(name)) p.cache?.putLook(name, it) }
                         }.also { found -> if (found == null) candidates.forEach { it.cache?.putLook(name, null) } }
                     }
                     if (look == null) unresolvedColors += name else {

@@ -144,6 +144,7 @@ object ModLocator {
         val version = forge.mods.firstOrNull { it.id.equals("minecraft", true) }?.version?.takeIf { it.isNotBlank() }
             ?: world.info.versionName.takeIf { RELEASE.matches(it) }
         val wanted = mods.mapTo(HashSet()) { it.id.lowercase() }
+        val wantedStems = mods.map { norm(it.id.substringBefore('|')) }.filter { it.length >= 5 }.toSet()
         val own = listOfNotNull(instanceMods(world.folder), world.folder.parent?.resolve("mods")).filter { it.isDirectory() }
         val candidates = (known.filter { it.isRegularFile() }.mapNotNull(::archive) +
             (own + extraFolders).distinct().flatMap(::archivesIn)).distinctBy { it.path.toAbsolutePath().normalize() }
@@ -154,18 +155,75 @@ object ModLocator {
             if (!a.fits(version, namedWorld = !forge.numericIds)) continue
             val ids = a.modIds.mapTo(HashSet()) { it.lowercase() }
             val fromOwnFolder = own.any { a.path.startsWith(it) } || a.path in known
+            // Without metadata, its asset namespaces have to look like the world's mod ids
+            // (`projectzulublock` for ProjectZulu|Core); an instance's own mods folder is trusted as it is.
             val matches = ids.any { it in wanted } ||
-                (ids.isEmpty() && (fromOwnFolder || a.namespaces.any { it in wanted }))
+                (ids.isEmpty() && (fromOwnFolder || a.namespaces.any { ns -> ns in wanted || wantedStems.any { norm(ns).startsWith(it) } }))
             if (!matches) continue
             // The same mod twice (several versions in one folder): the first one wins.
             if (ids.isNotEmpty() && ids.all { it in provided }) continue
             provided += ids
             a.bundled.mapTo(provided) { it.lowercase() }
-            if (ids.isEmpty()) provided += a.namespaces
+            if (ids.isEmpty()) {
+                provided += a.namespaces
+                // Matched by namespace (ProjectZulu): the mods whose ids it looks like are there too.
+                mods.filter { m -> norm(m.id.substringBefore('|')).let { it.length >= 5 && a.namespaces.any { ns -> norm(ns).startsWith(it) } } }
+                    .mapTo(provided) { it.id.lowercase() }
+            }
             if (a.hasAssets) chosen += a
         }
         return Found(chosen.map { it.path }, mods.filter { it.id.lowercase() !in provided })
     }
+
+    /**
+     * Searches [root] (a drive, a backup folder) for `mods` folders and returns the ones that together provide the
+     * most of [world]'s missing mods, best first. Old instances often survive only in backups, under another path
+     * than the save. [progress] gets (mods folders found, folders read); [cancelled] stops early.
+     */
+    fun search(world: AnvilWorld, root: Path, known: List<Path> = emptyList(), progress: (Int, Int) -> Unit = { _, _ -> }, cancelled: () -> Boolean = { false }): List<Path> {
+        val found = modsFolders(root, progress, cancelled)
+        // Greedy: each round takes the folder that leaves the fewest mods missing, until no folder helps.
+        val chosen = ArrayList<Path>()
+        var missing = locate(world, known, folders).missing.size
+        val candidates = found.filter { it !in folders }.toMutableList()
+        candidates.forEachIndexed { i, f -> if (!cancelled()) { archivesIn(f); progress(found.size, i + 1) } } // read their metadata once
+        while (candidates.isNotEmpty() && missing > 0 && !cancelled()) {
+            // listOf: a Path is an Iterable of its parts, so `list + path` would add its name elements.
+            val (best, left) = candidates.map { it to locate(world, known, folders + chosen + listOf(it)).missing.size }.minByOrNull { it.second } ?: break
+            if (left >= missing) break
+            chosen.add(best)
+            candidates.remove(best)
+            missing = left
+        }
+        return chosen
+    }
+
+    /** Every folder named `mods` under [root], not looking inside saves, game data or system folders. */
+    internal fun modsFolders(root: Path, progress: (Int, Int) -> Unit = { _, _ -> }, cancelled: () -> Boolean = { false }): List<Path> {
+        val found = ArrayList<Path>()
+        runCatching {
+            Files.walkFileTree(root, emptySet(), SEARCH_DEPTH, object : java.nio.file.SimpleFileVisitor<Path>() {
+                override fun preVisitDirectory(dir: Path, attrs: java.nio.file.attribute.BasicFileAttributes): java.nio.file.FileVisitResult {
+                    if (cancelled()) return java.nio.file.FileVisitResult.TERMINATE
+                    val name = dir.fileName?.toString()?.lowercase() ?: return java.nio.file.FileVisitResult.CONTINUE
+                    if (name in SKIP_DIRS || name.startsWith("dim") || name.startsWith(".git")) return java.nio.file.FileVisitResult.SKIP_SUBTREE
+                    if (name == "mods") {
+                        found.add(dir)
+                        progress(found.size, 0)
+                        return java.nio.file.FileVisitResult.SKIP_SUBTREE
+                    }
+                    return java.nio.file.FileVisitResult.CONTINUE
+                }
+
+                override fun visitFileFailed(file: Path, exc: java.io.IOException) = java.nio.file.FileVisitResult.CONTINUE
+            })
+        }
+        return found
+    }
+
+    private const val SEARCH_DEPTH = 9
+    private val SKIP_DIRS = setOf("saves", "region", "entities", "poi", "libraries", "assets", "versions", "resourcepacks",
+        "screenshots", "logs", "crash-reports", "node_modules", "build", "\$recycle.bin", "system volume information", "windows")
 
     /** `<instance>/mods` for a save in `<instance>/saves/<world>`. */
     private fun instanceMods(world: Path): Path? {
@@ -174,7 +232,7 @@ object ModLocator {
     }
 
     /** Archives in [folder] and one level below (`mods/1.6.4/`, `mods/<version>/`). */
-    private fun archivesIn(folder: Path): List<Archive> = runCatching {
+    internal fun archivesIn(folder: Path): List<Archive> = runCatching {
         val top = folder.listDirectoryEntries()
         val files = top.filter { it.isRegularFile() } + top.filter { it.isDirectory() }.flatMap { d -> runCatching { d.listDirectoryEntries().filter { it.isRegularFile() } }.getOrDefault(emptyList()) }
         files.filter { it.name.endsWith(".jar", true) || it.name.endsWith(".zip", true) }.sortedBy { it.name.lowercase() }.mapNotNull(::archive)
@@ -273,6 +331,8 @@ object ModLocator {
         }
         return ids to range
     }
+
+    private fun norm(s: String) = s.lowercase().filter { it.isLetterOrDigit() }
 
     private val RELEASE = Regex("""\d+(\.\d+)+""")
 

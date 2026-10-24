@@ -55,8 +55,14 @@ sealed interface WorldLocation {
  * come from, also for chunks pasted from other worlds, and so mods outside the world's own instance are
  * found again.
  */
-data class WorldTextures(val files: List<Path> = emptyList(), val coreJar: Path? = null, val mods: List<Path> = emptyList()) {
-    val isDefault: Boolean get() = files.isEmpty() && coreJar == null && mods.isEmpty()
+data class WorldTextures(
+    val files: List<Path> = emptyList(),
+    val coreJar: Path? = null,
+    val mods: List<Path> = emptyList(),
+    /** Textures the user picked for single blocks, by block key (`ns:name[meta=n]` or `ns:name`) -> texture id. */
+    val blocks: Map<String, String> = emptyMap(),
+) {
+    val isDefault: Boolean get() = files.isEmpty() && coreJar == null && mods.isEmpty() && blocks.isEmpty()
 }
 
 /** Everything a project file holds, ready to write. */
@@ -305,12 +311,19 @@ object ProjectFile {
         for (file in t.files) e.add(doc, "file").setPath(dir, file)
         for (mod in t.mods) e.add(doc, "mod").setPath(dir, mod)
         t.coreJar?.let { e.add(doc, "core-jar").setPath(dir, it) }
+        for ((key, texture) in t.blocks.entries.sortedBy { it.key }) e.add(doc, "block").apply {
+            setAttribute("key", key)
+            setAttribute("texture", texture)
+        }
     }
 
     private fun Element.readTextures(dir: Path) = WorldTextures(
         files = children("file").mapNotNull { it.readPath(dir) },
         coreJar = children("core-jar").firstOrNull()?.readPath(dir),
         mods = children("mod").mapNotNull { it.readPath(dir) },
+        blocks = children("block").mapNotNull { b ->
+            b.getAttribute("key").ifEmpty { null }?.let { k -> b.getAttribute("texture").ifEmpty { null }?.let { k to it } }
+        }.toMap(),
     )
 
     private fun Element.setPath(dir: Path?, path: Path) {

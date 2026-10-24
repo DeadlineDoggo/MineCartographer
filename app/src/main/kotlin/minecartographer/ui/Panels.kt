@@ -36,6 +36,7 @@ import minecartographer.editor.EditorState
 import minecartographer.editor.SelectMode
 import minecartographer.editor.Tool
 import minecartographer.textures.TextureFiles
+import minecartographer.textures.ModLocator
 import minecartographer.viewport.RenderMode
 
 private val panelPadding = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
@@ -251,6 +252,48 @@ fun SelectionPanel(state: EditorState) {
     }
 }
 
+/** Where a modded world's mods come from, and the ways to find missing ones. Shown in every render mode. */
+@Composable
+private fun ModsSection(state: EditorState, world: AnvilWorld) {
+    val forge = world.info.forge ?: return
+    val loaded = state.loadedTexturesOf(world)
+    val total = forge.playedMods.size
+    SectionHeader("MODS OF ${world.name.uppercase()}")
+    Txt(
+        when {
+            loaded != null -> "${total - loaded.missingMods.size} of $total mods found (${loaded.mods.size} archives with textures)"
+            state.texturesLoading -> "Looking for mods…"
+            else -> "$total mods (${forge.generation.label})"
+        },
+        size = 12.sp, maxLines = 2,
+    )
+    loaded?.missingMods?.takeIf { it.isNotEmpty() }?.let { missing ->
+        Txt("Not found: " + missing.joinToString { it.id }, Modifier.padding(top = 4.dp), color = EditorTheme.warning, size = 11.sp, maxLines = 4)
+    }
+    Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TextButton("Search for mods…", enabled = !state.busy) {
+                val start = world.folder.toAbsolutePath().root
+                FileDialogs.chooseFolder("Search for the mods of \"${world.name}\" in (a drive or a backup folder)", start)?.let { state.searchMods(world, it) }
+            }
+            TextButton("Add mod folder…") {
+                FileDialogs.chooseFolder("Folder with the mods of \"${world.name}\"", world.folder)?.let(state::addModFolder)
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            TextButton("Block textures…", enabled = loaded?.mods?.isNotEmpty() == true) { state.blockTexturesDialogVisible = true }
+            if (ModLocator.folders.isNotEmpty()) TextButton("Forget added folders") { state.forgetModFolders() }
+        }
+    }
+    val folders = ModLocator.folders
+    if (folders.isNotEmpty()) {
+        Txt("Also searched: " + folders.joinToString("\n"), Modifier.padding(top = 4.dp), color = EditorTheme.textFaint, size = 10.sp, mono = true, maxLines = 6)
+    }
+    Txt("Mods are looked for in the save's own instance (its mods folder) and in folders added here. Textures of " +
+        "worlds before 1.8 are guessed; fix single blocks in Block textures.",
+        color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 6.dp), maxLines = 4)
+}
+
 @Composable
 fun ViewPanel(state: EditorState) {
     val settings = state.renderSettings
@@ -259,6 +302,7 @@ fun ViewPanel(state: EditorState) {
         Segmented(RenderMode.entries, settings.mode, { it.label }) { state.setRenderMode(it) }
         Txt(settings.mode.description, color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 6.dp))
         val world = state.activeWorld
+        (world as? AnvilWorld)?.takeIf { state.hasMods(it) }?.let { ModsSection(state, it) }
         if (settings.mode == RenderMode.Textured && world != null) {
             SectionHeader("TEXTURES OF ${world.name.uppercase()}")
             val own = state.texturesOf(world).files.isNotEmpty()
@@ -341,8 +385,11 @@ fun InspectorPanel(state: EditorState) {
                 loaded?.missingMods?.takeIf { it.isNotEmpty() }?.let { missing ->
                     Txt("Not found: " + missing.joinToString { it.id }, Modifier.padding(top = 4.dp), color = EditorTheme.warning, size = 11.sp, maxLines = 6)
                 }
-                TextButton("Add mod folder…", Modifier.padding(top = 6.dp)) {
-                    FileDialogs.chooseFolder("Folder with the mods of \"${world.name}\"", (world as? AnvilWorld)?.folder)?.let(state::addModFolder)
+                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton("Add mod folder…") {
+                        FileDialogs.chooseFolder("Folder with the mods of \"${world.name}\"", (world as? AnvilWorld)?.folder)?.let(state::addModFolder)
+                    }
+                    TextButton("Block textures…", enabled = loaded?.mods?.isNotEmpty() == true) { state.blockTexturesDialogVisible = true }
                 }
                 Txt(forge.playedMods.joinToString { if (it.version.isBlank()) it.id else "${it.id} ${it.version}" },
                     Modifier.padding(top = 4.dp), color = EditorTheme.textDim, size = 11.sp, maxLines = 12)

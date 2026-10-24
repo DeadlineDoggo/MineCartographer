@@ -243,8 +243,13 @@ class ModTexturesTest {
                 val sources = found.archives + listOfNotNull(TextureFiles.findClientJar(version))
                 val (colored, modelled, colors) = AssetSource(sources).use { assets ->
                     val m = BlockModels(assets)
+                    // As the app does for 1.6 worlds: their blocks and the mods' config files are the clues.
+                    info.forge!!.legacyBlocks.takeIf { it.isNotEmpty() }?.let { legacy ->
+                        val configs = extra.mapNotNull { it.parent?.resolve("config") } + listOfNotNull(info.folder.parent?.parent?.resolve("config"))
+                        m.registerLegacy(legacy.values, LegacyTextures.configKeys(configs))
+                    }
                     Triple(
-                        modded.filter { m.mapLook(BlockState.of(it)) != null },
+                        modded.filter { name -> m.mapLook(states.firstOrNull { it.name == name } ?: BlockState.of(name)) != null },
                         states.filter { s -> m.model(s, 0) !== FlatModels.model(s, 0) },
                         states.mapNotNull { m.mapLook(it)?.color }.toSet(),
                     ).also { if (states.any { "meta" in it.properties }) println("  variants: " + states.filter { "meta" in it.properties }.sortedBy { it.toString() }.joinToString { "$it -> ${m.variantOf(it).properties}" }) }
