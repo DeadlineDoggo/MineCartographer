@@ -1083,13 +1083,16 @@ class EditorState {
         val (layer, targets) = checkedTargets(layered = false) ?: return
         val t = Rotation.normalize(turns)
         if (t == 0) return
-        val pivot = ChunkPos(
-            Math.floorDiv(targets.keys.minOf { it.x } + targets.keys.maxOf { it.x }, 2),
-            Math.floorDiv(targets.keys.minOf { it.z } + targets.keys.maxOf { it.z }, 2),
-        )
+        // The middle of the area as a point (chunk corners are whole numbers, so it can be half a chunk off a cell),
+        // not a chunk: turning the cells around a chunk's corner would swing the whole area sideways.
+        val cx = (targets.keys.minOf { it.x } + targets.keys.maxOf { it.x } + 1) / 2.0
+        val cz = (targets.keys.minOf { it.z } + targets.keys.maxOf { it.z } + 1) / 2.0
         fun turned(pos: ChunkPos): ChunkPos {
-            val r = Rotation.chunk(t, ChunkPos(pos.x - pivot.x, pos.z - pivot.z))
-            return ChunkPos(pivot.x + r.x, pivot.z + r.z)
+            var dx = pos.x + 0.5 - cx
+            var dz = pos.z + 0.5 - cz
+            repeat(t) { val nx = -dz; dz = dx; dx = nx }
+            // A bounding box with one odd and one even side lands half a chunk off the grid: round the same way everywhere.
+            return ChunkPos(Math.floor(cx + dx).toInt(), Math.floor(cz + dz).toInt())
         }
         val wasSelected = targets.keys.filterTo(HashSet()) { it in selection }
         if (commit("Turn chunks") { it.reshape(layer.id, targets.keys) { pos, ref -> turned(pos) to ref.copy(turns = Rotation.normalize(ref.turns + t)) } }) {
