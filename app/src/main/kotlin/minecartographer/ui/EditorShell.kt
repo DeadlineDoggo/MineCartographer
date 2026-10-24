@@ -179,6 +179,7 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             MenuItem("Lower layer", "PgDn", stack != null && !isBase) { state.lowerLayer() },
             MenuSeparator,
             MenuItem("Block mapping…", enabled = stack != null && active != null && state.needsBlockMap(active, stack)) {
+                state.blockPickerKey = null
                 state.blockMapLayer = active?.id
             },
             MenuSeparator,

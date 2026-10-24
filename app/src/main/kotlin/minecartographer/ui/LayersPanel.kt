@@ -134,7 +134,10 @@ private fun LayerRow(state: EditorState, stack: LayerStack, layer: Layer, active
         if (state.needsBlockMap(layer, stack)) {
             IconButton(Icons.Mapping, "Block mapping: what this layer's modded blocks become here",
                 selected = state.blockMapLayer == layer.id, size = 26.dp, iconSize = 14.dp) {
-                state.blockMapLayer = if (state.blockMapLayer == layer.id) null else layer.id
+                if (state.blockMapLayer == layer.id) state.closeBlockMapping() else {
+                    state.blockPickerKey = null
+                    state.blockMapLayer = layer.id
+                }
             }
         }
     }

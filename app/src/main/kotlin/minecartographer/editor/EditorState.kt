@@ -1015,6 +1015,14 @@ class EditorState {
     /** The layer whose block mapping panel is open; null when it is closed. */
     var blockMapLayer by mutableStateOf<Long?>(null)
 
+    /** The block of that panel whose replacement is being picked (second panel); null when none. */
+    var blockPickerKey by mutableStateOf<String?>(null)
+
+    fun closeBlockMapping() {
+        blockPickerKey = null
+        blockMapLayer = null
+    }
+
     /** The worlds a layer's chunks come from. */
     fun sourceWorldsOf(layer: Layer): Set<WorldSource> = when (layer) {
         is ChunkLayer -> layer.chunks.values.mapTo(HashSet()) { it.world }

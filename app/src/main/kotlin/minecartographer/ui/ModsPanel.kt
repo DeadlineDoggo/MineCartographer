@@ -352,7 +352,7 @@ private fun BlockDetail(state: EditorState, world: AnvilWorld, models: BlockMode
 // ---- Thumbnails ----
 
 /** Texture bitmaps for the panel, made off the UI thread and kept while it is shown. */
-private class ThumbCache(val models: BlockModels) {
+internal class ThumbCache(val models: BlockModels) {
     val bitmaps = ConcurrentHashMap<String, Any>() // ImageBitmap, or NONE
 
     fun load(id: String): ImageBitmap? {
@@ -377,7 +377,7 @@ private class ThumbCache(val models: BlockModels) {
 
 /** A texture's pixels, sharp; for blocks without one, their map color with a "?". */
 @Composable
-private fun Thumb(cache: ThumbCache, id: String?, key: String?, size: Dp) {
+internal fun Thumb(cache: ThumbCache, id: String?, key: String?, size: Dp) {
     val bitmap by produceState<ImageBitmap?>(null, id) { value = id?.let { withContext(Dispatchers.IO) { cache.load(it) } } }
     val shape = RoundedCornerShape(3.dp)
     Box(Modifier.size(size).clip(shape).border(1.dp, EditorTheme.border, shape), contentAlignment = Alignment.Center) {
