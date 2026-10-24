@@ -46,7 +46,6 @@ import minecartographer.textures.ModLocator
 import minecartographer.textures.FlatModels
 import minecartographer.core.anvil.ModInfo
 import minecartographer.core.anvil.BlockColors
-import minecartographer.core.BlockState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import java.util.concurrent.ConcurrentHashMap
@@ -491,15 +490,16 @@ class EditorState {
                 for (name in names) {
                     val ns = name.substringBefore(':')
                     val look = packs.filter { ns in it.assets.namespaces }
-                        .firstNotNullOfOrNull { runCatching { it.mapLook(BlockState.of(name)) }.getOrNull() }
+                        .firstNotNullOfOrNull { runCatching { it.mapLook(BlockColors.stateOf(name)) }.getOrNull() }
                     if (look == null) unresolvedColors += name else {
                         BlockColors.learn(name, look)
                         learned += name
                     }
                 }
                 if (learned.isEmpty()) continue
-                FlatModels.forget(learned)
-                packs.forEach { it.forget(learned) }
+                val blocks = learned.mapTo(HashSet()) { BlockColors.stateOf(it).name }
+                FlatModels.forget(blocks)
+                packs.forEach { it.forget(blocks) }
                 withContext(Dispatchers.Main) { tiles.reloadWorlds(worlds.filter(::hasMods).mapTo(HashSet()) { it.id }) }
             }
         }

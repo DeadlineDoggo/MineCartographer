@@ -80,6 +80,17 @@ class ForgeDataTest {
     }
 
     @Test
+    fun `learned colors of modded blocks can differ per data value`() {
+        val ore = minecartographer.core.BlockState.of("ie:ore_test", mapOf("meta" to "2"))
+        BlockColors.look(ore) // a modded block with a data value is wanted under its own key
+        assertTrue(BlockColors.keyOf("ie:ore_test", "2") in BlockColors.takeWanted())
+        BlockColors.learn(BlockColors.keyOf("ie:ore_test", "2"), BlockColors.solidLook(0x404070))
+        assertEquals(0x404070, BlockColors.look(ore).color and 0xFFFFFF)
+        assertEquals(ore, BlockColors.stateOf(BlockColors.keyOf("ie:ore_test", "2")))
+        assertTrue(BlockColors.look(minecartographer.core.BlockState.of("ie:ore_test")).color and 0xFFFFFF != 0x404070, "meta 0 keeps its own look")
+    }
+
+    @Test
     fun `vanilla worlds have no Forge data`() {
         assertNull(ForgeData.read(compound("Data" to compound())))
     }
@@ -88,6 +99,7 @@ class ForgeDataTest {
     fun `modded ids keep their data value, vanilla ids are mapped as before`() {
         val mapping = LegacyMapping(mapOf(1612 to "galacticraftcore:basic_block_core"))
         assertEquals("galacticraftcore:basic_block_core", mapping.state(1612, 0).name)
+        assertEquals(mapOf("meta" to "0"), mapping.state(1612, 0).properties)
         assertEquals(mapOf("meta" to "7"), mapping.state(1612, 7).properties)
         assertSame(mapping.state(1612, 7), mapping.state(1612, 7))
         assertEquals(LegacyBlocks.state(17, 2), mapping.state(17, 2))

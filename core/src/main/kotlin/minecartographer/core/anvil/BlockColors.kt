@@ -53,8 +53,27 @@ object BlockColors {
 
     private fun isModded(name: String) = ':' in name && !name.startsWith("minecraft:") && !name.startsWith("minecartographer:")
 
-    fun look(state: BlockState): BlockLook =
-        if (state.name == BlockState.COLOR_BLOCK) solid(state.properties["rgb"]?.toIntOrNull(16) ?: 0x8A8A8A) else look(state.name)
+    fun look(state: BlockState): BlockLook {
+        if (state.name == BlockState.COLOR_BLOCK) return solid(state.properties["rgb"]?.toIntOrNull(16) ?: 0x8A8A8A)
+        // Modded blocks before 1.13 keep their data value, which often picks the variant (which ore, which stone).
+        val meta = state.properties["meta"]
+        if (meta != null && isModded(state.name)) {
+            val key = keyOf(state.name, meta)
+            learned[key]?.let { return it }
+            wanted += key
+        }
+        return look(state.name)
+    }
+
+    /** What [takeWanted] and [learn] use for a block with a data value: `mod:name[meta=3]`. */
+    fun keyOf(name: String, meta: String) = "$name[meta=$meta]"
+
+    /** The block a [takeWanted] key stands for. */
+    fun stateOf(key: String): BlockState {
+        val bracket = key.indexOf("[meta=")
+        if (bracket < 0) return BlockState.of(key)
+        return BlockState.of(key.substring(0, bracket), mapOf("meta" to key.substring(bracket + 6).trimEnd(']')))
+    }
 
     fun waterColor(depth: Int): Int {
         val t = (depth.coerceIn(1, 16) - 1) / 15f

@@ -211,6 +211,8 @@ class AssetSource(val files: List<Path>) : Closeable {
         }
     }
 
+    fun has(path: String) = path in index
+
     /** Asset namespaces present (`minecraft`, mod ids...). */
     val namespaces: Set<String> = index.keys.mapTo(HashSet()) { it.substring(7, it.indexOf('/', 7).coerceAtLeast(7)) }
 
@@ -220,6 +222,14 @@ class AssetSource(val files: List<Path>) : Closeable {
     fun read(path: String): ByteArray? {
         val (zip, entry) = index[path] ?: return null
         return zip.getInputStream(entry).use { it.readAllBytes() }
+    }
+
+    private val enums = ConcurrentHashMap<ZipFile, Map<String, List<EnumConstants.Constant>>>()
+
+    /** Enum constants in the classes of the archive that provides [path] (read once per archive, when first asked). */
+    fun enumConstants(path: String): Map<String, List<EnumConstants.Constant>> {
+        val zip = index[path]?.first ?: return emptyMap()
+        return enums.computeIfAbsent(zip) { EnumConstants.index(it) }
     }
 
     override fun close() = zips.forEach { runCatching { it.close() } }
@@ -262,25 +272,32 @@ class BlockModels(val assets: AssetSource) : BlockModelSource {
     fun mapLook(state: BlockState): BlockLook? {
         val (ns, path) = split(state.name)
         val json = blockstate(ns, path) ?: return null
-        val refs = ArrayList<Map<*, *>>()
-        // Forge's blockstate format (1.8 - 1.12, "forge_marker": 1) keeps the model and textures in "defaults".
-        (json["defaults"] as? Map<*, *>)?.let { refs += it }
-        (json["variants"] as? Map<*, *>)?.let { variants ->
-            pick(variants.entries.firstOrNull { (key, _) -> matchesVariant(key as String, state) }?.value ?: variants.values.firstOrNull())?.let { refs += it }
-        }
-        (json["multipart"] as? List<*>)?.firstNotNullOfOrNull { (it as? Map<*, *>)?.get("apply") }?.let(::pick)?.let { refs += it }
         val textures = LinkedHashMap<String, String>()
-        for (ref in refs) {
-            (ref["model"] as? String)?.let { resolve(it) }?.textures?.forEach { (k, v) -> textures.putIfAbsent(k, v) }
-            (ref["textures"] as? Map<*, *>)?.forEach { (k, v) -> if (k is String && v is String) textures[k] = v }
+        for (part in parts(expandMeta(state, json), json, firstOnly = true)) {
+            part.model?.let { resolve(it) }?.textures?.forEach { (k, v) -> textures.putIfAbsent(k, v) }
+            textures.putAll(part.textures)
         }
         if (textures.isEmpty()) return null
         if ("cross" in textures || "plant" in textures) return BlockLook.SKIP
         val model = ResolvedModel(textures, null)
         val key = TOP_TEXTURES.firstOrNull { it in textures } ?: textures.keys.first()
-        val rgb = resolveTexture(model, "#$key")?.averageRgb ?: return null
+        // Connected-texture mods (Chisel) name textures that only exist as CTM sheets; any other texture of the
+        // same blockstate (the same family of blocks) is a better color than none.
+        val rgb = resolveTexture(model, "#$key")?.averageRgb
+            ?: textureNames(json).firstNotNullOfOrNull { texture(it)?.averageRgb } ?: return null
         // Leaves and grass textures are gray and colored by the biome; mods often ship them colored already.
         return BlockColors.solidLook(if (Tints.biomeColored(path) && isGrayish(rgb)) multiply(rgb, Tints.of(path)) else rgb)
+    }
+
+    /** Every texture id a blockstate names directly (Forge blockstates list textures inline), in file order. */
+    private fun textureNames(json: Any?): Sequence<String> = sequence {
+        when (json) {
+            is Map<*, *> -> for ((k, v) in json) {
+                if (k == "textures" && v is Map<*, *>) v.values.forEach { t -> if (t is String && !t.startsWith("#")) yield(t) }
+                else yieldAll(textureNames(v))
+            }
+            is List<*> -> json.forEach { yieldAll(textureNames(it)) }
+        }
     }
 
     private fun isGrayish(rgb: Int): Boolean {
@@ -294,10 +311,12 @@ class BlockModels(val assets: AssetSource) : BlockModelSource {
     }
 
     /** The blockstate json for `ns:path`; Chisel-style numbered blocks (`marble2`) fall back to the base name. */
-    private fun blockstate(ns: String, path: String): Map<*, *>? {
-        val names = listOfNotNull(path, ALIASES[path], path.trimEnd { it.isDigit() }.takeIf { it != path && it.isNotEmpty() })
-        return names.firstNotNullOfOrNull { p -> assets.read("assets/$ns/blockstates/$p.json")?.let { Json.parse(String(it)) as? Map<*, *> } }
-    }
+    private fun blockstate(ns: String, path: String): Map<*, *>? =
+        blockstatePath(ns, path)?.let { p -> assets.read(p)?.let { Json.parse(String(it)) as? Map<*, *> } }
+
+    private fun blockstatePath(ns: String, path: String): String? =
+        listOfNotNull(path, ALIASES[path], path.trimEnd { it.isDigit() }.takeIf { it != path && it.isNotEmpty() })
+            .map { "assets/$ns/blockstates/$it.json" }.firstOrNull { assets.has(it) }
 
     fun texture(id: String): Texture? = textures.getOrPut(id) {
         val (ns, path) = split(id)
@@ -313,36 +332,130 @@ class BlockModels(val assets: AssetSource) : BlockModelSource {
 
         val (ns, _) = split(state.name)
         val json = blockstate(ns, path) ?: return null
-
-        val parts = ArrayList<Pair<Map<*, *>, Boolean>>() // model reference, matched by variant or multipart
-        (json["variants"] as? Map<*, *>)?.let { variants ->
-            val entry = variants.entries.firstOrNull { (key, _) -> matchesVariant(key as String, state) }?.value
-                ?: variants.values.firstOrNull()
-            pick(entry)?.let { parts += it to true }
-        }
-        (json["multipart"] as? List<*>)?.forEach { part ->
-            part as? Map<*, *> ?: return@forEach
-            val condition = part["when"] as? Map<*, *>
-            if (condition == null || matchesCondition(condition, state)) pick(part["apply"])?.let { parts += it to true }
-        }
+        val parts = parts(expandMeta(state, json), json, firstOnly = false)
         if (parts.isEmpty()) return null
 
         val tint = Tints.of(path)
         val quads = ArrayList<Quad>()
         var occludes = false
-        for ((ref, _) in parts) {
-            val model = resolve(ref["model"] as? String ?: continue) ?: continue
-            val elements = model.elements ?: continue // drawn by the game's entity renderer
-            val xRot = ((ref["x"] as? Double)?.toInt() ?: 0) / 90
-            val yRot = ((ref["y"] as? Double)?.toInt() ?: 0) / 90
+        for (part in parts) {
+            val resolved = resolve(part.model ?: continue) ?: continue
+            val elements = resolved.elements ?: continue // drawn by the game's entity renderer
+            val model = if (part.textures.isEmpty()) resolved else ResolvedModel(resolved.textures + part.textures, elements)
             for (element in elements) {
-                val added = ModelBuilder.element(element, xRot, yRot, tint) { variable -> resolveTexture(model, variable) }
+                val added = ModelBuilder.element(element, part.x, part.y, tint) { variable -> resolveTexture(model, variable) }
                 quads += added.first
                 if (added.second) occludes = true
             }
         }
         if (quads.isEmpty()) return null
         return BlockModel(quads, occludes && look.kind != BlockKind.SKIP, fluid = false)
+    }
+
+    /** [state] with its data value turned into the variant it stands for (see [expandMeta]); for tests and the inspector. */
+    fun variantOf(state: BlockState): BlockState {
+        val (ns, path) = split(state.name)
+        return blockstate(ns, path)?.let { expandMeta(state, it) } ?: state
+    }
+
+    /** One model of a block: its id, quarter turns about x and y, and textures that replace the model's own (Forge). */
+    private class Part(val model: String?, val x: Int, val y: Int, val textures: Map<String, String>)
+
+    /**
+     * The models [state] is drawn with: the matching variant, or every multipart piece whose condition holds
+     * ([firstOnly]: just the first piece, enough for a map color). Forge's format (1.8 - 1.12, `"forge_marker": 1`)
+     * is merged into one part instead: `defaults`, then a full variant key (`"facing=north,type=copper"` or
+     * `normal`), then one entry per property table (`"type": {"copper": {...}}`); later ones override the model,
+     * rotation and single textures.
+     */
+    private fun parts(state: BlockState, json: Map<*, *>, firstOnly: Boolean): List<Part> {
+        val variants = json["variants"] as? Map<*, *> ?: emptyMap<Any, Any>()
+        if ((json["forge_marker"] as? Double)?.toInt() == 1) {
+            var model: String? = null
+            var x = 0
+            var y = 0
+            val textures = LinkedHashMap<String, String>()
+            fun apply(entry: Any?) {
+                val m = pick(entry) ?: return
+                (m["model"] as? String)?.let { model = it }
+                (m["x"] as? Double)?.let { x = it.toInt() / 90 }
+                (m["y"] as? Double)?.let { y = it.toInt() / 90 }
+                (m["textures"] as? Map<*, *>)?.forEach { (k, v) -> if (k is String && v is String) textures[k] = v }
+            }
+            apply(json["defaults"])
+            val full = variants.entries.firstOrNull { (k, _) -> k is String && '=' in k && matchesVariant(k, state) }?.value ?: variants["normal"]
+            apply(full)
+            var tables = 0
+            for ((k, v) in variants) {
+                if (k !is String || '=' in k || k == "normal" || k == "inventory" || v !is Map<*, *> || !isPropertyTable(v)) continue
+                apply(v[state.properties[k] ?: v.keys.firstOrNull()])
+                tables++
+            }
+            // Chisel-style: variants named by the mod (`array`, `braid`...), chosen in code by the data value;
+            // `marble2` is the second block of the same family, so it continues with the next 16.
+            if (full == null && tables == 0) {
+                val named = variants.entries.filter { (k, v) -> k is String && '=' !in k && k != "inventory" && !(v is Map<*, *> && isPropertyTable(v)) }
+                if (named.isNotEmpty()) {
+                    val meta = state.properties["meta"]?.toIntOrNull() ?: 0
+                    val block = state.path.takeLastWhile { it.isDigit() }.toIntOrNull()?.takeIf { it >= 2 }?.minus(1) ?: 0
+                    apply(named[(block * 16 + meta) % named.size].value)
+                }
+            }
+            // OBJ and B3D models need loaders this renderer doesn't have.
+            if (model == null || model!!.endsWith(".obj") || model!!.endsWith(".b3d")) return emptyList()
+            return listOf(Part(model, x, y, textures))
+        }
+        val parts = ArrayList<Part>()
+        fun add(entry: Any?) {
+            val m = pick(entry) ?: return
+            parts += Part(m["model"] as? String, ((m["x"] as? Double)?.toInt() ?: 0) / 90, ((m["y"] as? Double)?.toInt() ?: 0) / 90, emptyMap())
+        }
+        if (variants.isNotEmpty()) add(variants.entries.firstOrNull { (key, _) -> matchesVariant(key as String, state) }?.value ?: variants.values.firstOrNull())
+        (json["multipart"] as? List<*>)?.forEach { part ->
+            if (firstOnly && parts.isNotEmpty()) return@forEach
+            part as? Map<*, *> ?: return@forEach
+            val condition = part["when"] as? Map<*, *>
+            if (condition == null || matchesCondition(condition, state) || firstOnly) add(part["apply"])
+        }
+        return parts
+    }
+
+    /** `"type": {"copper": {...}, "lead": {...}}`: a Forge table of one property's values, not a variant itself. */
+    private fun isPropertyTable(map: Map<*, *>) = map.isNotEmpty() && map.values.all { it is Map<*, *> || it is List<*> }
+
+    /**
+     * Blocks before 1.13 store a 4-bit data value instead of properties, and only the mod's code knows what it
+     * means. Guess: it numbers the values of the block's main property in the order the blockstate lists them
+     * (`type` of an ore block: copper, aluminum, lead...). Properties that are worked out from neighbors or
+     * placement (facing, connections, true/false flags) are not candidates. Modded blocks only; vanilla ones
+     * come with real properties from [minecartographer.core.anvil.LegacyBlocks].
+     */
+    private fun expandMeta(state: BlockState, json: Map<*, *>): BlockState {
+        if (state.name.startsWith("minecraft:")) return state
+        val meta = state.properties["meta"]?.toIntOrNull() ?: return state
+        val values = LinkedHashMap<String, LinkedHashSet<String>>()
+        val variants = json["variants"] as? Map<*, *> ?: return state
+        for ((k, v) in variants) {
+            if (k !is String) continue
+            if ('=' in k) {
+                for (kv in k.split(',')) {
+                    val (name, value) = kv.split('=', limit = 2).takeIf { it.size == 2 } ?: continue
+                    values.getOrPut(name) { LinkedHashSet() } += value
+                }
+            } else if (k != "normal" && k != "inventory" && v is Map<*, *> && isPropertyTable(v)) {
+                v.keys.forEach { value -> values.getOrPut(k) { LinkedHashSet() } += value.toString() }
+            }
+        }
+        val main = values.entries
+            .filter { (name, vs) -> vs.size >= 2 && name !in NOT_FROM_META && !vs.all { it == "true" || it == "false" } }
+            .maxByOrNull { it.value.size } ?: return state
+        // Some mods give each variant an explicit data value in an enum (Galacticraft: ORE_COPPER("ore_copper_gc", 5)),
+        // and machines keep their facing in the low bits: take the variant with the highest value not above meta.
+        val (ns, path) = split(state.name)
+        val explicit = blockstatePath(ns, path)?.let { EnumConstants.dataValues(assets.enumConstants(it), main.value) }
+        val value = explicit?.entries?.filter { it.value <= meta }?.maxByOrNull { it.value }?.key
+            ?: main.value.elementAt(meta % main.value.size)
+        return BlockState.of(state.name, mapOf(main.key to value))
     }
 
     private fun fluid(texture: String, tint: Int): BlockModel {
@@ -407,6 +520,12 @@ class BlockModels(val assets: AssetSource) : BlockModelSource {
     }
 
     companion object {
+        /** Properties a block gets from its surroundings or placement, so the data value doesn't pick them. */
+        private val NOT_FROM_META = setOf(
+            "facing", "axis", "rotation", "half", "shape", "direction", "hinge", "attached", "connected", "in_wall",
+            "north", "south", "east", "west", "up", "down",
+        )
+
         /** Texture variables that show the top of a block, best first. */
         private val TOP_TEXTURES = listOf("top", "up", "end", "all", "texture", "side", "particle")
 

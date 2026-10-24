@@ -104,8 +104,8 @@ class ForgeData(
 
 /**
  * Turns pre-1.13 `(id, data)` pairs into block states for one world: vanilla ids through [LegacyBlocks],
- * modded ids through the world's Forge table, with the data value kept as a `meta` property (it picks the
- * variant, e.g. which ore, and only the mod's code knows how).
+ * modded ids through the world's Forge table, with the data value kept as a `meta` property, also when it is 0
+ * (it picks the variant, e.g. which ore, and only the mod's code knows how).
  */
 class LegacyMapping(private val modded: Map<Int, String>) {
     private val cache = arrayOfNulls<BlockState>(ForgeData.MAX_ID shl 4)
@@ -115,7 +115,7 @@ class LegacyMapping(private val modded: Map<Int, String>) {
         val key = (id shl 4) or (data and 15)
         cache[key]?.let { return it }
         val name = modded.getValue(id)
-        return BlockState.of(name, if (data and 15 == 0) emptyMap() else mapOf("meta" to (data and 15).toString())).also { cache[key] = it }
+        return BlockState.of(name, mapOf("meta" to (data and 15).toString())).also { cache[key] = it }
     }
 
     companion object {
