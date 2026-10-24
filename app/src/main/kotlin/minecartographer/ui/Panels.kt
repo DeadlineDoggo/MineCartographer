@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import minecartographer.core.ChunkPos
 import minecartographer.core.WorldSource
 import minecartographer.core.anvil.AnvilWorld
+import minecartographer.core.anvil.ForgeData
 import minecartographer.core.edit.BaseLayer
 import minecartographer.core.edit.ChunkLayer
 import minecartographer.editor.BRUSH_SIZES
@@ -123,6 +124,7 @@ fun WorldsPanel(state: EditorState) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Txt(info.name, Modifier.weight(1f), size = 12.sp)
+                    info.forge?.let { ForgeChip(it) }
                     VersionChip(info.versionName)
                 }
             }
@@ -144,6 +146,17 @@ private fun VersionChip(text: String) = Txt(
     color = EditorTheme.textDim, size = 11.sp, mono = true,
 )
 
+/** Marks worlds played with Forge; the tooltip names the mods. */
+@Composable
+private fun ForgeChip(forge: ForgeData) = WithTooltip("${forge.generation.label}, ${forge.playedMods.size} mods: " +
+    forge.playedMods.take(12).joinToString { it.id } + if (forge.playedMods.size > 12) ", …" else "") {
+    Txt(
+        "Forge",
+        Modifier.padding(end = 4.dp).clip(RoundedCornerShape(3.dp)).background(EditorTheme.window).padding(horizontal = 6.dp, vertical = 2.dp),
+        color = EditorTheme.edited, size = 11.sp, mono = true,
+    )
+}
+
 @Composable
 private fun WorldCard(state: EditorState, world: WorldSource, active: Boolean, onClose: () -> Unit, onClick: () -> Unit) {
     val shape = RoundedCornerShape(6.dp)
@@ -156,6 +169,7 @@ private fun WorldCard(state: EditorState, world: WorldSource, active: Boolean, o
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Txt(world.name, Modifier.weight(1f), weight = FontWeight.SemiBold)
+            (world as? AnvilWorld)?.info?.forge?.let { ForgeChip(it) }
             VersionChip(world.versionLabel)
             IconButton(Icons.Close, "Close world", size = 22.dp, iconSize = 9.dp, onClick = onClose)
         }
@@ -313,6 +327,14 @@ fun InspectorPanel(state: EditorState) {
             KeyValue("Version", world.versionLabel)
             KeyValue("DataVersion", world.dataVersion?.toString() ?: "–")
             KeyValue("Build height", "${world.minY}..${world.maxY}")
+            (world as? AnvilWorld)?.info?.forge?.let { forge ->
+                SectionHeader("MODS")
+                KeyValue("Loader", forge.generation.label)
+                KeyValue("Mods", forge.playedMods.size.toString())
+                if (forge.numericIds) KeyValue("Modded block ids", forge.blockNames.size.toString())
+                Txt(forge.playedMods.joinToString { if (it.version.isBlank()) it.id else "${it.id} ${it.version}" },
+                    Modifier.padding(top = 4.dp), color = EditorTheme.textDim, size = 11.sp, maxLines = 12)
+            }
         }
     }
 }

@@ -44,6 +44,27 @@ class RealWorldsTest {
     }
 
     @TestFactory
+    fun `modded block ids get their names from the world's Forge data`(): List<DynamicTest> = TestWorlds.requireForge().map { info ->
+        DynamicTest.dynamicTest("${info.forge!!.generation.label} (${info.name})") {
+            val world = AnvilWorld.open(info.folder)
+            try {
+                val b = world.focusBounds!!
+                val names = HashSet<String>()
+                for (x in b.minX..b.maxX step maxOf(1, (b.maxX - b.minX) / 12)) for (z in b.minZ..b.maxZ step maxOf(1, (b.maxZ - b.minZ) / 12)) {
+                    val blocks = world.loadBlocks(ChunkPos(x, z)) ?: continue
+                    blocks.palette.mapTo(names) { it.name }
+                }
+                val modded = names.filter { !it.startsWith("minecraft:") && !it.startsWith("minecartographer:") }
+                println("${info.name}: ${names.size} block names, ${modded.size} modded, unknown: ${"minecartographer:unknown" in names}; e.g. ${modded.take(5)}")
+                assertTrue(modded.isNotEmpty(), "No modded blocks named in ${info.name}")
+                assertTrue(modded.all { it in info.forge.blockNames.values }, "Names outside the world's table")
+            } finally {
+                world.close()
+            }
+        }
+    }
+
+    @TestFactory
     fun `visible blocks agree with the surface`(): List<DynamicTest> = TestWorlds.require().map { info ->
         DynamicTest.dynamicTest("${info.versionName} (${info.name})") {
             val world = AnvilWorld.open(info.folder)

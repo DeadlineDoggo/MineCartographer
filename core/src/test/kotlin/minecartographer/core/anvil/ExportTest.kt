@@ -18,8 +18,27 @@ class ExportTest {
     private fun ChunkPos.far() = ChunkPos(x + 5000, z - 5000) // outside anything a test world has generated
 
     @Test
+    fun `chunks of a Forge world before 1_13 can't be merged into a world that numbers blocks differently`() {
+        val forgeInfo = TestWorlds.requireForge().first()
+        val baseInfo = TestWorlds.require().last().takeIf { it.forge?.numericIds != true }
+        assumeTrue(baseInfo != null, "Needs a base world without numeric modded ids")
+        val base = AnvilWorld.open(baseInfo!!.folder)
+        val modded = AnvilWorld.open(forgeInfo.folder)
+        try {
+            val pos = modded.chunks().first()
+            val stack = LayerStack.of(base).addLayer("pasted", mapOf(pos.far() to ChunkRef(modded, pos)))
+            val problems = WorldExporter.validate(stack)
+            assertTrue(problems.any { "numbers its modded blocks differently" in it }, problems.toString())
+        } finally {
+            base.close()
+            modded.close()
+        }
+    }
+
+    @Test
     fun `older chunks pasted into a newer world keep their own version and move`(@TempDir tmp: Path) {
-        val (newInfo, oldInfo) = TestWorlds.newestAnd { (it.dataVersion ?: 0) < SurfaceExtractor.DV_FLATTENING }
+        // Forge worlds before 1.13 can't be merged into other worlds (see the test above).
+        val (newInfo, oldInfo) = TestWorlds.newestAnd { (it.dataVersion ?: 0) < SurfaceExtractor.DV_FLATTENING && it.forge?.numericIds != true }
         val target = AnvilWorld.open(newInfo.folder)
         val old = AnvilWorld.open(oldInfo.folder)
         val sourcePos = old.chunks().first { old.loadSurface(it) != null }

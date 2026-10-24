@@ -26,6 +26,8 @@ data class WorldInfo(
     val versionName: String,
     /** SpawnX / SpawnZ from level.dat. */
     val spawn: Pair<Int, Int>? = null,
+    /** Mods and modded block ids, for worlds played with Forge; null otherwise. */
+    val forge: ForgeData? = null,
 ) {
     companion object {
         /** level.dat `version` of the Anvil format (1.2+); 19132 is the older McRegion format. */
@@ -34,7 +36,8 @@ data class WorldInfo(
         fun read(folder: Path): WorldInfo {
             val levelDat = folder.resolve("level.dat")
             if (!levelDat.exists()) throw IOException("No level.dat in $folder")
-            val data = levelDat.inputStream().use { Nbt.readGzip(it) }.compound("Data") ?: throw IOException("level.dat has no Data compound")
+            val root = levelDat.inputStream().use { Nbt.readGzip(it) }
+            val data = root.compound("Data") ?: throw IOException("level.dat has no Data compound")
             val format = data.int("version")
             if (format != null && format != ANVIL) {
                 throw IOException("This world uses an old save format (McRegion, before 1.2). Open it once in Minecraft 1.2 or newer to convert it.")
@@ -44,7 +47,8 @@ data class WorldInfo(
             val spawnX = data.int("SpawnX")
             val spawnZ = data.int("SpawnZ")
             val spawn = if (spawnX != null && spawnZ != null) spawnX to spawnZ else null
-            return WorldInfo(folder, data.string("LevelName") ?: folder.name, dataVersion, versionName, spawn)
+            val forge = runCatching { ForgeData.read(root) }.getOrNull()
+            return WorldInfo(folder, data.string("LevelName") ?: folder.name, dataVersion, versionName, spawn, forge)
         }
     }
 }
@@ -71,6 +75,9 @@ class AnvilWorld private constructor(
     override val maxY = if ((info.dataVersion ?: 0) >= SurfaceExtractor.DV_FLAT_CHUNK) 319 else 255
     val folder: Path get() = info.folder
 
+    /** Numeric block ids (before 1.13) to states, including this world's modded ids. */
+    private val legacy = info.forge?.legacyMapping() ?: LegacyMapping.VANILLA
+
     /** Region files stay open while the world is open; reads on them are thread-safe. */
     private val regions = ConcurrentHashMap<ChunkPos, RegionFile>()
     private val entityRegions = ConcurrentHashMap<ChunkPos, RegionFile>()
@@ -79,12 +86,12 @@ class AnvilWorld private constructor(
 
     override fun loadSurface(pos: ChunkPos): ChunkSurface? {
         val raw = readChunk(pos) ?: return null
-        return SurfaceExtractor.extract(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos)
+        return SurfaceExtractor.extract(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos, legacy)
     }
 
     override fun loadBlocks(pos: ChunkPos): ChunkBlocks? {
         val raw = readChunk(pos) ?: return null
-        return SurfaceExtractor.extractBlocks(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos)
+        return SurfaceExtractor.extractBlocks(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos, legacy)
     }
 
     fun readChunk(pos: ChunkPos): RawChunk? = if (!hasChunk(pos)) null else region(regions, regionDir, pos)?.read(pos)

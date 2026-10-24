@@ -45,8 +45,9 @@ object SurfaceExtractor {
         val allAir = states.all { it.isAir }
     }
 
-    fun extract(root: CompoundTag, pos: ChunkPos): ChunkSurface? {
-        val sections = decode(root)?.filterNot { it.allSkip } ?: return null
+    /** [legacy] names numeric block ids (before 1.13); worlds with mods bring their own table. */
+    fun extract(root: CompoundTag, pos: ChunkPos, legacy: LegacyMapping = LegacyMapping.VANILLA): ChunkSurface? {
+        val sections = decode(root, legacy)?.filterNot { it.allSkip } ?: return null
         if (sections.isEmpty()) return null
         return scan(pos, sections, null)
     }
@@ -55,8 +56,8 @@ object SurfaceExtractor {
      * The blocks that can be seen from above: everything from one block below the lowest surface point
      * (the top solid or water block of a column) up to the highest non-air block.
      */
-    fun extractBlocks(root: CompoundTag, pos: ChunkPos): ChunkBlocks? {
-        val sections = decode(root)?.filterNot { it.allAir } ?: return null
+    fun extractBlocks(root: CompoundTag, pos: ChunkPos, legacy: LegacyMapping = LegacyMapping.VANILLA): ChunkBlocks? {
+        val sections = decode(root, legacy)?.filterNot { it.allAir } ?: return null
         val solid = sections.filterNot { it.allSkip }
         if (solid.isEmpty()) return null
         val waterDepth = ByteArray(256)
@@ -94,7 +95,7 @@ object SurfaceExtractor {
     }
 
     /** Sections with blocks, highest first; null for chunks that aren't fully generated. */
-    private fun decode(root: CompoundTag): List<Section>? {
+    private fun decode(root: CompoundTag, legacy: LegacyMapping): List<Section>? {
         val dataVersion = root.int("DataVersion") ?: 0
         val level = root.compound("Level")
         val chunk = level ?: root
@@ -105,7 +106,7 @@ object SurfaceExtractor {
         return when {
             level == null -> modernSections(root.list("sections"))
             dataVersion >= DV_FLATTENING -> paletteSections(level.list("Sections"), spanning = dataVersion < DV_NO_SPANNING)
-            else -> legacySections(level.list("Sections"))
+            else -> legacySections(level.list("Sections"), legacy)
         }.sortedByDescending { it.y }
     }
 
@@ -222,7 +223,7 @@ object SurfaceExtractor {
 
     // ---- 1.2 - 1.12 ----
 
-    private fun legacySections(list: ListTag?): List<Section> = list.orEmpty().mapNotNull { tag ->
+    private fun legacySections(list: ListTag?, legacy: LegacyMapping): List<Section> = list.orEmpty().mapNotNull { tag ->
         val s = tag as? CompoundTag ?: return@mapNotNull null
         val blocks = s.byteArray("Blocks") ?: return@mapNotNull null
         if (blocks.size < 4096) return@mapNotNull null
@@ -240,7 +241,7 @@ object SurfaceExtractor {
             val key = (id shl 4) or meta
             var index = paletteIndex[key]
             if (index == 0) {
-                states += LegacyBlocks.state(id, meta)
+                states += legacy.state(id, meta)
                 keys += key
                 index = states.size
                 paletteIndex[key] = index

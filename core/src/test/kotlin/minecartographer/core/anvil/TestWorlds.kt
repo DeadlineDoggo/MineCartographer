@@ -15,16 +15,30 @@ import kotlin.io.path.name
 object TestWorlds {
     private val root: Path? = System.getenv("MINECARTOGRAPHER_WORLDS")?.let { Path.of(it) }?.takeIf { it.isDirectory() }
 
-    /** One world per game version (the one with the fewest region files), oldest first. */
-    val byVersion: List<WorldInfo> by lazy {
+    private val all: List<WorldInfo> by lazy {
         val folders = root?.let { r ->
             Files.walk(r, 4).use { paths -> paths.filter { it.name == "level.dat" }.map { it.parent }.toList() }
         }.orEmpty()
-        folders.mapNotNull { runCatching { WorldInfo.read(it) }.getOrNull() }
-            .filter { regionCount(it.folder) > 0 }
-            .groupBy { it.versionName }
-            .map { (_, worlds) -> worlds.minBy { regionCount(it.folder) } }
+        folders.mapNotNull { runCatching { WorldInfo.read(it) }.getOrNull() }.filter { regionCount(it.folder) > 0 }
+    }
+
+    /** One world per game version (vanilla first, then the fewest region files), oldest first. */
+    val byVersion: List<WorldInfo> by lazy {
+        all.groupBy { it.versionName }
+            .map { (_, worlds) -> worlds.minWith(compareBy<WorldInfo> { it.forge != null }.thenBy { regionCount(it.folder) }) }
             .sortedBy { it.dataVersion ?: 0 }
+    }
+
+    /** Per Forge generation with numeric ids, the world with the most modded block ids. */
+    val forgeNumeric: List<WorldInfo> by lazy {
+        all.filter { it.forge?.numericIds == true && it.forge.blockNames.isNotEmpty() }
+            .groupBy { it.forge!!.generation }
+            .map { (_, worlds) -> worlds.maxBy { it.forge!!.blockNames.size } }
+    }
+
+    fun requireForge(): List<WorldInfo> {
+        assumeTrue(forgeNumeric.isNotEmpty(), "No Forge world before 1.13 under MINECARTOGRAPHER_WORLDS")
+        return forgeNumeric
     }
 
     fun require(): List<WorldInfo> {

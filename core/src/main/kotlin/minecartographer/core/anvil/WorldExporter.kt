@@ -47,6 +47,16 @@ object WorldExporter {
         sources.filterIsInstance<AnvilWorld>().filter { (it.dataVersion ?: 0) > target }.forEach {
             problems += "\"${it.name}\" (${it.versionLabel}) is newer than \"${base.name}\" (${base.versionLabel}); Minecraft can only upgrade chunks, not downgrade them."
         }
+        // Before 1.13 chunks store bare numbers, and Forge numbers modded blocks per world: copied as they are,
+        // they would turn into whatever the base world calls those numbers.
+        val baseIds = base.info.forge?.takeIf { it.numericIds }?.blockNames.orEmpty()
+        sources.filterIsInstance<AnvilWorld>().filter { it != base }.forEach { source ->
+            val ids = source.info.forge?.takeIf { it.numericIds }?.blockNames.orEmpty()
+            if (ids != baseIds && (source.dataVersion ?: 0) < SurfaceExtractor.DV_FLATTENING) {
+                problems += "\"${source.name}\" numbers its modded blocks differently from \"${base.name}\"; " +
+                    "its chunks would change into other blocks. Only worlds of the same modpack can be merged before 1.13."
+            }
+        }
         return problems
     }
 

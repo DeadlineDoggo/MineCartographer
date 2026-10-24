@@ -5,7 +5,8 @@ import minecartographer.core.BlockState
 /**
  * Pre-1.13 blocks (numeric id plus 4-bit data value) as modern block states. Covers the data values
  * that change how a block looks (wood types, colors, rail shapes, stair facing...); the rest keep
- * their default state. Modded ids become `minecartographer:unknown`, drawn gray.
+ * their default state. Ids it doesn't know become `minecartographer:unknown`, drawn gray; worlds played
+ * with Forge name their modded ids through [LegacyMapping] instead.
  */
 object LegacyBlocks {
     private val cache = arrayOfNulls<BlockState>(1 shl 16)
