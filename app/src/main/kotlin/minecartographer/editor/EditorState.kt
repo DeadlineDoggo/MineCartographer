@@ -27,6 +27,7 @@ import minecartographer.core.edit.BaseLayer
 import minecartographer.core.edit.ChunkClipboard
 import minecartographer.core.edit.ChunkLayer
 import minecartographer.core.edit.Layer
+import minecartographer.core.DemoWorld
 import minecartographer.core.edit.LayerStack
 import minecartographer.core.edit.UndoHistory
 import minecartographer.core.project.ProjectDocument
@@ -570,6 +571,16 @@ class EditorState {
         val mods = archives.mapNotNull { a -> generateSequence(a.parent) { it.parent }.take(3).firstOrNull { it.fileName?.toString().equals("mods", true) } }
         val instance = world.folder.toAbsolutePath().normalize().parent?.takeIf { it.fileName?.toString().equals("saves", true) }?.parent
         return (mods.mapNotNull { it.parent?.resolve("config") } + listOfNotNull(instance?.resolve("config"), world.folder.parent?.resolve("config"))).distinct()
+    }
+
+    /** The start screen over the editor: shown at launch until something is opened. */
+    var startScreenVisible by mutableStateOf(true)
+
+    /** Two generated worlds, for trying the editor without a save. */
+    fun openDemo() {
+        addWorld(DemoWorld("Demo Valley", seed = 1))
+        addWorld(DemoWorld("Demo Highlands", seed = 2024, radiusChunks = 16))
+        markSaved()
     }
 
     /** The shortcuts and tips card over the map. */

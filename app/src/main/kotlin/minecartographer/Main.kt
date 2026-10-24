@@ -7,7 +7,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
-import minecartographer.core.DemoWorld
 import minecartographer.core.project.ProjectFile
 import minecartographer.editor.EditorState
 import minecartographer.textures.PackCache
@@ -28,10 +27,9 @@ fun main(args: Array<String>) = application {
         // Pack caches not used for two months go; it only costs a little time once.
         kotlin.concurrent.thread(isDaemon = true, name = "prune-caches") { PackCache.prune() }
         EditorState().apply {
-            beginLoading("Loading worlds")
-            addWorld(DemoWorld("Demo Valley", seed = 1))
-            addWorld(DemoWorld("Demo Highlands", seed = 2024, radiusChunks = 16))
-            markSaved()
+            // Nothing opens by itself: the start screen offers the ways in (a path on the command line skips it).
+            skipLoading()
+            startScreenVisible = args.isEmpty()
         }
     }
     val exit = {

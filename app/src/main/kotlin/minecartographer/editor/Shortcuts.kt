@@ -27,6 +27,10 @@ fun EditorState.handleKey(e: KeyEvent): Boolean {
         helpVisible = !helpVisible
         return true
     }
+    if (startScreenVisible) {
+        if (e.key == Key.Escape) startScreenVisible = false
+        return true
+    }
     if (typing) return false
     if (helpVisible && e.key == Key.Escape) {
         helpVisible = false

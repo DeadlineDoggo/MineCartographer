@@ -71,6 +71,7 @@ fun EditorShell(state: EditorState, onExit: () -> Unit) {
         // Startup covers the whole window; later loading steps only cover the viewport (see ViewportOverlay).
         LoadingLayer(state, visible = state.startingUp, fullWindow = true)
     }
+    StartScreen(state)
     ExportDialog(state)
 }
 
@@ -131,6 +132,7 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             MenuItem("Save project as…", "Ctrl+Alt+S", state.worlds.isNotEmpty()) { state.saveProjectInteractive(saveAs = true) },
             MenuSeparator,
             MenuItem("Open world folder…", "Ctrl+O", !state.busy) { FileDialogs.chooseWorldFolder()?.let(state::openWorldFolder) },
+            MenuItem("Open demo worlds", enabled = !state.busy) { state.openDemo() },
             MenuItem("Close world", enabled = world != null) { world?.let(state::closeWorld) },
             MenuSeparator,
             MenuItem("Export merged world…", "Ctrl+Shift+S", world != null && !state.busy) { state.exportDialogVisible = true },
@@ -212,7 +214,10 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
         Tool.entries.map { t -> MenuItem(t.label, t.keyLabel, checked = state.tool == t) { state.selectTool(t) } }
     },
     Menu("Help") {
-        listOf(MenuItem("Shortcuts & quick tips", "F1", checked = state.helpVisible) { state.helpVisible = !state.helpVisible })
+        listOf(
+            MenuItem("Shortcuts & quick tips", "F1", checked = state.helpVisible) { state.helpVisible = !state.helpVisible },
+            MenuItem("Start screen") { state.startScreenVisible = true },
+        )
     },
 )
 
