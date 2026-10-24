@@ -92,6 +92,7 @@ private fun EditorLayout(state: EditorState, onExit: () -> Unit) {
                 ChunkViewport(state, Modifier.fillMaxSize())
                 ViewportOverlay(state)
                 ModsDrawer(state)
+                HelpOverlay(state)
             }
             if (state.rightDockVisible) {
                 Splitter { state.rightDockWidth = (state.rightDockWidth - it).coerceIn(MIN_DOCK_WIDTH, MAX_DOCK_WIDTH) }
@@ -209,6 +210,9 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
     },
     Menu("Tools") {
         Tool.entries.map { t -> MenuItem(t.label, t.keyLabel, checked = state.tool == t) { state.selectTool(t) } }
+    },
+    Menu("Help") {
+        listOf(MenuItem("Shortcuts & quick tips", "F1", checked = state.helpVisible) { state.helpVisible = !state.helpVisible })
     },
 )
 

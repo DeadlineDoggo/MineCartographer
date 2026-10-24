@@ -213,20 +213,10 @@ class EditorState {
 
     // ---- Opening, closing and exporting worlds ----
 
-    /** Saves found in launcher folders and next to recently opened worlds. */
-    var foundWorlds by mutableStateOf<List<WorldInfo>>(emptyList())
-        private set
     /** True while a background task (opening or exporting a world) runs; only one at a time. */
     var busy by mutableStateOf(false)
         private set
     var exportDialogVisible by mutableStateOf(false)
-
-    fun refreshFoundWorlds() {
-        scope.launch(Dispatchers.IO) {
-            val found = WorldLibrary.findWorlds()
-            withContext(Dispatchers.Main) { foundWorlds = found }
-        }
-    }
 
     fun isOpen(folder: Path) = worlds.any { (it as? AnvilWorld)?.folder?.toAbsolutePath()?.normalize() == folder.toAbsolutePath().normalize() }
 
@@ -322,7 +312,6 @@ class EditorState {
                     r.warnings.forEach(System.err::println)
                     notify("Exported ${r.chunks} chunks (${r.relocated} moved) to $output$extra")
                     WorldLibrary.remember(output)
-                    refreshFoundWorlds()
                 }.onFailure {
                     notify("Export failed: ${it.message}", warning = true)
                 }
@@ -583,6 +572,9 @@ class EditorState {
         return (mods.mapNotNull { it.parent?.resolve("config") } + listOfNotNull(instance?.resolve("config"), world.folder.parent?.resolve("config"))).distinct()
     }
 
+    /** The shortcuts and tips card over the map. */
+    var helpVisible by mutableStateOf(false)
+
     /** The Mods & textures panel over the map, and its width. */
     var modsPanelVisible by mutableStateOf(false)
     var modsPanelWidth by mutableStateOf(640.dp)
@@ -815,10 +807,14 @@ class EditorState {
 
     fun clearSelection() { selection = emptySet() }
 
-    fun selectAll() {
-        val stack = activeStack ?: return
-        val b = stack.bounds ?: return
-        selection = buildSet {
+    fun selectAll() = selectInBackground("Selecting all chunks") { stack, _ -> allChunks(stack) }
+
+    fun invertSelection() = selectInBackground("Inverting selection") { stack, old -> allChunks(stack) - old }
+
+    /** Every position that shows a chunk. Walks the whole world area, so never on the UI thread. */
+    private fun allChunks(stack: LayerStack): Set<ChunkPos> {
+        val b = stack.bounds ?: return emptySet()
+        return buildSet {
             for (x in b.minX..b.maxX) for (z in b.minZ..b.maxZ) {
                 val pos = ChunkPos(x, z)
                 if (stack.resolve(pos) != null) add(pos)
@@ -826,10 +822,19 @@ class EditorState {
         }
     }
 
-    fun invertSelection() {
-        val old = selection
-        selectAll()
-        selection = selection - old
+    /** Works out a selection off the UI thread, with the loading layer over the map meanwhile. */
+    private fun selectInBackground(title: String, compute: (LayerStack, Set<ChunkPos>) -> Set<ChunkPos>) {
+        val stack = activeStack ?: return
+        val before = selection
+        if (loading != null) return
+        loading = LoadingStep(title, waitForTiles = false)
+        scope.launch(Dispatchers.Default) {
+            val result = runCatching { compute(stack, before) }
+            withContext(Dispatchers.Main) {
+                loading = null
+                result.onSuccess { selection = it }.onFailure { notify("Selection failed: ${it.message}", warning = true) }
+            }
+        }
     }
 
     fun layerToSelection(id: Long) {

@@ -104,8 +104,8 @@ The installer ends up in `app/build/compose/binaries/`.
 
 ## Using it
 
-1. **File → Open world folder…** (Ctrl+O). Pick the world folder or its `level.dat`. The Worlds
-   tab also lists saves found in the usual launcher folders.
+1. **File → Open world folder…** (Ctrl+O). Pick the world folder or its `level.dat`. The app
+   never searches your computer for saves on its own.
 2. Select chunks with the brush (B) or rectangle (R) tool and copy them (Ctrl+C).
 3. Open the target world and paste (Ctrl+V). The chunks follow the cursor until you click, and
    become a new layer.

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -109,31 +110,6 @@ fun WorldsPanel(state: EditorState) {
         for (world in state.worlds) {
             WorldCard(state, world, active = world == state.activeWorld, onClose = { state.closeWorld(world) }) { state.openWorld(world) }
             Spacer(Modifier.height(6.dp))
-        }
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            SectionHeader("SAVES ON THIS COMPUTER", Modifier.weight(1f))
-            IconButton(Icons.RotateRight, "Search again", size = 24.dp, iconSize = 12.dp) { state.refreshFoundWorlds() }
-        }
-        val found = state.foundWorlds.filterNot { state.isOpen(it.folder) }
-        if (found.isEmpty()) {
-            Txt("No other saves found in the usual launcher folders. Saves next to worlds you open show up here too.",
-                color = EditorTheme.textDim, size = 12.sp, maxLines = 4)
-        }
-        for ((folder, infos) in found.groupBy { it.folder.parent }) {
-            Txt(shortPath(folder), Modifier.padding(top = 6.dp, bottom = 2.dp), color = EditorTheme.textFaint, size = 11.sp, mono = true)
-            for (info in infos.sortedBy { it.name.lowercase() }) {
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp))
-                        .clickable(enabled = !state.busy) { state.openWorldFolder(info.folder) }
-                        .padding(horizontal = 6.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Txt(info.name, Modifier.weight(1f), size = 12.sp)
-                    info.forge?.let { ForgeChip(it) }
-                    VersionChip(info.versionName)
-                }
-            }
         }
     }
 }
@@ -276,7 +252,7 @@ fun ViewPanel(state: EditorState) {
         Checkbox("Chunk borders", settings.chunkBorders) { state.updateRenderSettings(settings.copy(chunkBorders = it)) }
         Checkbox("Layer colors and erased chunks", state.showLayerColors) { state.showLayerColors = it }
         Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            Txt("Height", Modifier.width(56.dp), color = EditorTheme.textDim, size = 12.sp)
+            Txt("Height", Modifier.width(92.dp), color = EditorTheme.textDim, size = 12.sp)
             Box(Modifier.weight(1f)) {
                 Segmented(listOf(0.5f, 1f, 1.5f, 2f), settings.heightScale, { "${it}×".replace(".0×", "×") }) {
                     state.updateRenderSettings(settings.copy(heightScale = it))
@@ -286,11 +262,6 @@ fun ViewPanel(state: EditorState) {
 
         (world as? AnvilWorld)?.takeIf { state.hasMods(it) }?.let { ModsSection(state, it) }
         if (settings.mode == RenderMode.Textured && world != null) TexturesSection(state, world)
-
-        SectionHeader("NAVIGATION")
-        for ((key, action) in listOf("WASD / arrows" to "Move", "Right / middle drag" to "Move", "Mouse wheel" to "Zoom", "F" to "Fit world")) {
-            KeyValue(key, action)
-        }
     }
     androidx.compose.foundation.VerticalScrollbar(androidx.compose.foundation.rememberScrollbarAdapter(scroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
     }
@@ -308,14 +279,14 @@ private fun TexturesSection(state: EditorState, world: WorldSource) {
         else -> loaded.label
     }, if (own) "picked" else "default")
     ButtonRow {
-        TextButton("Choose…") { FileDialogs.chooseTextureFiles()?.let { state.chooseTextures(world, it) } }
-        if (own) TextButton("Use default") { state.chooseTextures(world, emptyList()) }
+        Btn("Choose…") { FileDialogs.chooseTextureFiles()?.let { state.chooseTextures(world, it) } }
+        if (own) Btn("Use default") { state.chooseTextures(world, emptyList()) }
     }
     val defaults = TextureFiles.chosen
     ValueRow("Default", if (defaults.isEmpty()) "Found automatically" else defaults.joinToString(" + ") { it.fileName.toString() }, null)
     ButtonRow {
-        TextButton("Choose…") { FileDialogs.chooseTextureFiles()?.let(state::chooseDefaultTextures) }
-        if (defaults.isNotEmpty()) TextButton("Find automatically") { state.chooseDefaultTextures(emptyList()) }
+        Btn("Choose…") { FileDialogs.chooseTextureFiles()?.let(state::chooseDefaultTextures) }
+        if (defaults.isNotEmpty()) Btn("Find automatically") { state.chooseDefaultTextures(emptyList()) }
     }
     Hint("Resource packs over a Minecraft client jar. Worlds from 1.13 on use the jar of their own version when it is installed. Pasted chunks keep their world's textures.")
 }
@@ -333,13 +304,13 @@ private fun ModsSection(state: EditorState, world: AnvilWorld) {
         else -> "– of $total"
     }, forge.generation.label)
     ValueRow("With textures", loaded?.mods?.size?.let { "$it archives" } ?: "–", null)
+    ButtonRow { Btn(if (state.modsPanelVisible) "Hide mods & textures" else "Mods & textures…", primary = true) { state.modsPanelVisible = !state.modsPanelVisible } }
     ButtonRow {
-        TextButton("Find mods…", enabled = !state.busy) {
+        Btn("Find mods…", enabled = !state.busy) {
             FileDialogs.chooseFolder("Find the mods of \"${world.name}\" in (a mods folder, an instance, a backup or a drive)", world.folder.parent)
                 ?.let { state.findMods(world, it) }
         }
-        TextButton("Mods & textures…") { state.modsPanelVisible = !state.modsPanelVisible }
-        TextButton("Rescan", enabled = !state.texturesLoading) { state.rescanTextures() }
+        Btn("Rescan", enabled = !state.texturesLoading) { state.rescanTextures() }
     }
     loaded?.missingMods?.takeIf { it.isNotEmpty() }?.let { missing ->
         Fold("Not found (${missing.size})", warning = true) {
@@ -370,14 +341,14 @@ private fun ValueRow(label: String, value: String, note: String?) {
     }
 }
 
-/** Buttons under the values; they wrap to the next line rather than being cut off in a narrow dock. */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+/** One row of buttons across the dock's whole width, sharing it equally (one button fills it). */
 @Composable
-private fun ButtonRow(content: @Composable () -> Unit) =
-    androidx.compose.foundation.layout.FlowRow(
-        Modifier.padding(start = 92.dp, top = 2.dp, bottom = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) { content() }
+private fun ButtonRow(content: @Composable RowScope.() -> Unit) =
+    Row(Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), content = content)
+
+@Composable
+private fun RowScope.Btn(text: String, primary: Boolean = false, enabled: Boolean = true, onClick: () -> Unit) =
+    TextButton(text, Modifier.weight(1f), primary = primary, enabled = enabled, onClick = onClick)
 
 /** Faint help text; wraps instead of being cut off. */
 @Composable

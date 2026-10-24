@@ -24,7 +24,7 @@ object FileDialogs {
     /** Lets the user pick a world folder (or its level.dat). Returns null when cancelled. */
     fun chooseWorldFolder(): Path? {
         platformLook
-        val start = WorldLibrary.recent().firstOrNull()?.parent ?: WorldLibrary.savesFolders().firstOrNull()
+        val start = WorldLibrary.recent().firstOrNull()?.parent
         val chooser = JFileChooser(start?.toFile()).apply {
             dialogTitle = "Open Minecraft world (choose the world folder or its level.dat)"
             fileSelectionMode = JFileChooser.FILES_AND_DIRECTORIES

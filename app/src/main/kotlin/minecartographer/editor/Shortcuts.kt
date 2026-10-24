@@ -23,7 +23,15 @@ fun EditorState.handleKey(e: KeyEvent): Boolean {
         KeyEventType.KeyDown -> if (!typing) heldKeys += e.key
         else -> return false
     }
+    if (e.key == Key.F1) {
+        helpVisible = !helpVisible
+        return true
+    }
     if (typing) return false
+    if (helpVisible && e.key == Key.Escape) {
+        helpVisible = false
+        return true
+    }
 
     val ctrl = e.isCtrlPressed
     val shift = e.isShiftPressed

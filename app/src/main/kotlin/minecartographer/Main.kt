@@ -32,7 +32,6 @@ fun main(args: Array<String>) = application {
             addWorld(DemoWorld("Demo Valley", seed = 1))
             addWorld(DemoWorld("Demo Highlands", seed = 2024, radiusChunks = 16))
             markSaved()
-            refreshFoundWorlds()
         }
     }
     val exit = {
