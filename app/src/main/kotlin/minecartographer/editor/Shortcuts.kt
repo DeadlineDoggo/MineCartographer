@@ -3,6 +3,7 @@ package minecartographer.editor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
@@ -26,8 +27,12 @@ fun EditorState.handleKey(e: KeyEvent): Boolean {
     val shift = e.isShiftPressed
     if (ctrl) {
         when (e.key) {
-            Key.O -> FileDialogs.chooseWorldFolder()?.let(::openWorldFolder)
-            Key.S -> if (shift) exportDialogVisible = true else return false
+            Key.O -> if (shift) openProjectInteractive() else FileDialogs.chooseWorldFolder()?.let(::openWorldFolder)
+            Key.S -> when {
+                shift -> exportDialogVisible = true
+                e.isAltPressed -> saveProjectInteractive(saveAs = true)
+                else -> saveProjectInteractive()
+            }
             Key.Z -> if (shift) redo() else undo()
             Key.Y -> redo()
             Key.C -> copy(visible = shift)
@@ -35,7 +40,7 @@ fun EditorState.handleKey(e: KeyEvent): Boolean {
             Key.V -> if (shift) pasteInPlace() else startPaste()
             Key.A -> if (shift) clearSelection() else selectAll()
             Key.I -> invertSelection()
-            Key.N -> if (shift) newLayer() else return false
+            Key.N -> if (shift) newLayer() else newProjectInteractive()
             Key.D -> if (shift) duplicateLayer() else return false
             Key.E -> if (shift) flatten() else mergeDown()
             else -> return false

@@ -88,10 +88,13 @@ class ChunkTileCache(
             invalidateTiles()
         }
 
-    /** Models for the Textured mode (null: none found, the Blocks look is used instead). */
-    var textures: BlockModelSource? = null
+    /**
+     * Models for the Textured mode by world id. A chunk is drawn with the textures of the world it comes from,
+     * also when it was pasted into another; worlds without any get the Blocks look.
+     */
+    var textures: Map<String, BlockModelSource> = emptyMap()
         set(value) {
-            if (value === field) return
+            if (value == field) return
             synchronized(lock) { field = value }
             if (settings.mode == RenderMode.Textured) invalidateTiles()
         }
@@ -203,7 +206,7 @@ class ChunkTileCache(
     }
 
     private sealed interface Work
-    private class RenderTile(val job: Job, val epoch: Int, val settings: RenderSettings, val textures: BlockModelSource?) : Work
+    private class RenderTile(val job: Job, val epoch: Int, val settings: RenderSettings, val textures: Map<String, BlockModelSource>) : Work
     private class LoadSurface(val prefetch: Prefetch) : Work
     private class Composite(val key: BlockKey, val parts: List<BlockPart>, val epoch: Int, val hs: Double) : Work
 
@@ -255,7 +258,7 @@ class ChunkTileCache(
                     ChunkTileRenderer.render(it.rotated(key.rotation), key.lod, settings)
                 }
                 RenderMode.Blocks, RenderMode.Textured -> (load(work.job.world, DataKey(key.worldId, key.pos, blocks = true)) as ChunkBlocks?)?.let {
-                    val models = if (settings.mode == RenderMode.Textured) work.textures ?: FlatModels else FlatModels
+                    val models = if (settings.mode == RenderMode.Textured) work.textures[key.worldId] ?: FlatModels else FlatModels
                     BlockTileRenderer.render(it.rotated(key.rotation), key.rotation, key.lod, settings, models)
                 }
             }
@@ -263,7 +266,9 @@ class ChunkTileCache(
 
         synchronized(lock) {
             inFlight -= key
-            if (tile == null) empty += key.surfaceKey // nothing to draw, or it failed: don't retry every frame
+            // Nothing to draw, or it failed: don't retry every frame. Not for stale work, which may have failed
+            // only because its textures were closed meanwhile.
+            if (tile == null && work.epoch == epoch) empty += key.surfaceKey
             if (tile != null && work.epoch != epoch) evicted += tile
             if (tile == null || work.epoch != epoch) return@synchronized
             tiles.put(key, tile)?.let {

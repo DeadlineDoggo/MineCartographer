@@ -8,7 +8,9 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import minecartographer.core.DemoWorld
+import minecartographer.core.project.ProjectFile
 import minecartographer.editor.EditorState
+import minecartographer.editor.confirmCloseProject
 import minecartographer.editor.handleKey
 import minecartographer.ui.AppIconPainter
 import minecartographer.ui.EditorShell
@@ -19,23 +21,26 @@ import kotlinx.coroutines.flow.first
 import java.awt.SplashScreen
 import java.nio.file.Path
 
-/** Command-line arguments are world folders to open after startup. */
+/** Command-line arguments are world folders or a project file to open after startup. */
 fun main(args: Array<String>) = application {
     val state = remember {
         EditorState().apply {
             beginLoading("Loading worlds")
             addWorld(DemoWorld("Demo Valley", seed = 1))
             addWorld(DemoWorld("Demo Highlands", seed = 2024, radiusChunks = 16))
+            markSaved()
             refreshFoundWorlds()
         }
     }
     val exit = {
-        state.dispose()
-        exitApplication()
+        if (state.confirmCloseProject()) {
+            state.dispose()
+            exitApplication()
+        }
     }
     Window(
         onCloseRequest = exit,
-        title = "${AppInfo.NAME} ${AppInfo.versionLabel}",
+        title = "${state.projectName}${if (state.projectDirty) " *" else ""} · ${AppInfo.NAME} ${AppInfo.versionLabel}",
         icon = AppIconPainter,
         state = rememberWindowState(size = DpSize(1440.dp, 900.dp)),
         onKeyEvent = state::handleKey,
@@ -46,7 +51,8 @@ fun main(args: Array<String>) = application {
             runCatching { SplashScreen.getSplashScreen()?.close() }
             for (arg in args) {
                 snapshotFlow { state.busy }.first { !it }
-                state.openWorldFolder(Path.of(arg))
+                val path = Path.of(arg)
+                if (path.toString().endsWith(".${ProjectFile.EXTENSION}")) state.openProject(path) else state.openWorldFolder(path)
             }
         }
         EditorShell(state, onExit = exit)

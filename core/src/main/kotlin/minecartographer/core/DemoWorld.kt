@@ -8,8 +8,8 @@ import kotlin.math.floor
  */
 class DemoWorld(
     override val name: String,
-    private val seed: Long,
-    radiusChunks: Int = 24,
+    val seed: Long,
+    val radiusChunks: Int = 24,
 ) : WorldSource {
     override val id = "demo-$seed"
     override val versionLabel = "Demo"

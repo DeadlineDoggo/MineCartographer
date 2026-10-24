@@ -1,12 +1,15 @@
 package minecartographer.ui
 
 import minecartographer.core.anvil.AnvilWorld
+import minecartographer.core.project.ProjectFile
 import minecartographer.editor.WorldLibrary
 import java.io.File
 import java.nio.file.Path
 import javax.swing.JFileChooser
+import javax.swing.JOptionPane
 import javax.swing.UIManager
 import javax.swing.filechooser.FileFilter
+import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
 
 /**
@@ -61,6 +64,63 @@ object FileDialogs {
         }
         if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return null
         return chooser.selectedFiles.map { it.toPath() }.ifEmpty { null }
+    }
+
+    private val projectFilter = object : FileFilter() {
+        override fun accept(f: File) = f.isDirectory || f.name.endsWith(".${ProjectFile.EXTENSION}")
+        override fun getDescription() = "MineCartographer projects (.${ProjectFile.EXTENSION})"
+    }
+
+    private fun projectFolder(current: Path?) = current?.parent ?: WorldLibrary.recentProjects().firstOrNull()?.parent
+
+    /** Lets the user pick a project file to open. */
+    fun chooseProjectToOpen(current: Path?): Path? {
+        platformLook
+        val chooser = JFileChooser(projectFolder(current)?.toFile()).apply {
+            dialogTitle = "Open project"
+            fileSelectionMode = JFileChooser.FILES_ONLY
+            isAcceptAllFileFilterUsed = false
+            fileFilter = projectFilter
+            approveButtonText = "Open project"
+        }
+        return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile.toPath() else null
+    }
+
+    /** Asks where to save a project, adding the extension and confirming before replacing a file. */
+    fun chooseProjectToSave(current: Path?, suggestedName: String): Path? {
+        platformLook
+        val chooser = JFileChooser(projectFolder(current)?.toFile()).apply {
+            dialogTitle = "Save project"
+            isAcceptAllFileFilterUsed = false
+            fileFilter = projectFilter
+            selectedFile = File(currentDirectory, current?.fileName?.toString() ?: "$suggestedName.${ProjectFile.EXTENSION}")
+            approveButtonText = "Save"
+        }
+        if (chooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) return null
+        val picked = chooser.selectedFile.toPath()
+        val file = if (picked.fileName.toString().endsWith(".${ProjectFile.EXTENSION}")) picked else picked.resolveSibling("${picked.fileName}.${ProjectFile.EXTENSION}")
+        if (file.exists() && file != current) {
+            val answer = JOptionPane.showConfirmDialog(null, "${file.fileName} already exists. Replace it?", "Save project", JOptionPane.YES_NO_OPTION)
+            if (answer != JOptionPane.YES_OPTION) return null
+        }
+        return file
+    }
+
+    enum class UnsavedChoice { Save, Discard, Cancel }
+
+    /** Asks what to do with unsaved changes to the project called [name]. */
+    fun askSaveChanges(name: String): UnsavedChoice {
+        platformLook
+        val options = arrayOf("Save", "Don't save", "Cancel")
+        val answer = JOptionPane.showOptionDialog(
+            null, "Save changes to \"$name\" before closing it?", "Unsaved changes",
+            JOptionPane.YES_NO_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[0],
+        )
+        return when (answer) {
+            0 -> UnsavedChoice.Save
+            1 -> UnsavedChoice.Discard
+            else -> UnsavedChoice.Cancel
+        }
     }
 
     /** Lets the user pick a folder to create something in. */

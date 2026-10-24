@@ -29,6 +29,14 @@ import minecartographer.core.edit.ChunkLayer
 import minecartographer.core.edit.Layer
 import minecartographer.core.edit.LayerStack
 import minecartographer.core.edit.UndoHistory
+import minecartographer.core.project.ProjectDocument
+import minecartographer.core.project.ProjectFile
+import minecartographer.core.project.ProjectSnapshot
+import minecartographer.core.project.WorldLocation
+import minecartographer.core.project.WorldTextures
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import minecartographer.AppInfo
 import minecartographer.viewport.ChunkTileCache
 import minecartographer.viewport.IsoView
 import minecartographer.textures.AssetSource
@@ -178,6 +186,8 @@ class EditorState {
         if (worlds.none { it.id == world.id }) {
             worlds += world
             stacks[world.id] = LayerStack.of(world)
+            changed()
+            refreshTextures()
         }
         if (activeWorld == null) openWorld(world)
     }
@@ -260,8 +270,11 @@ class EditorState {
         }
         history.removeIf { it.world == world }
         historyRevision++
+        changed()
         worlds.remove(world)
         stacks.remove(world.id)
+        worldTextures.remove(world.id)
+        refreshTextures()
         (world as? AnvilWorld)?.close()
         if (activeWorld == world) {
             activeWorld = null
@@ -280,6 +293,7 @@ class EditorState {
         if (busy) return notify("Wait for the current task to finish", warning = true)
         busy = true
         exportDialogVisible = false
+        val textures = worlds.associateWith(::texturesOf)
         val title = "Exporting $levelName"
         loading = LoadingStep(title, "Preparing", waitForTiles = false)
         val throttle = ProgressThrottle()
@@ -289,7 +303,7 @@ class EditorState {
                     if (throttle.ready(done == total)) scope.launch(Dispatchers.Main) {
                         if (busy) loading = LoadingStep(title, "$step $done / $total", if (total > 0) done.toFloat() / total else null, waitForTiles = false)
                     }
-                }
+                }.also { ProjectFile.writeSources(output, stack, textures, AppInfo.version) }
             }
             withContext(Dispatchers.Main) {
                 busy = false
@@ -308,46 +322,96 @@ class EditorState {
     }
 
     fun updateRenderSettings(settings: RenderSettings) {
+        val enteringTextured = settings.mode == RenderMode.Textured && renderSettings.mode != RenderMode.Textured
         renderSettings = settings
         tiles.settings = settings
-        if (settings.mode == RenderMode.Textured) loadTextures()
+        if (enteringTextured) refreshTextures()
     }
 
     fun setRenderMode(mode: RenderMode) = updateRenderSettings(renderSettings.copy(mode = mode))
 
     // ---- Textures ----
 
-    /** Where the Textured mode's textures come from (e.g. "1.20.1.jar"), null until loaded. */
-    var textureLabel by mutableStateOf<String?>(null)
+    /** Texture files picked per world id; worlds without an entry use the default ([TextureFiles.chosen]). */
+    private val worldTextures = mutableStateMapOf<String, WorldTextures>()
+    /** What each world's textures were last loaded from, by world id. */
+    private val loadedTextures = mutableStateMapOf<String, LoadedTextures>()
+    /** True while textures are being (re)loaded. */
+    var texturesLoading by mutableStateOf(false)
         private set
-    private var textureAssets: AssetSource? = null
-    private var texturesLoading = false
 
-    /** Opens the textures for the Textured mode once; without any, that mode looks like the Blocks mode. */
-    private fun loadTextures(force: Boolean = false) {
-        if (texturesLoading || (textureAssets != null && !force)) return
+    /** Files a world is drawn with: everything read, in order, and the client jar among them. */
+    class LoadedTextures(val files: List<Path>, val coreJar: Path?) {
+        val label: String get() = files.joinToString(" + ") { it.fileName.toString() }
+    }
+
+    /** Open textures by file list, shared by worlds that use the same files. Only used while holding [textureLock]. */
+    private val textureSets = HashMap<List<Path>, Pair<AssetSource, BlockModels>>()
+    private val textureLock = Mutex()
+    @Volatile private var textureRequest = 0
+
+    /** The files picked for [world] (empty: the default) and the core jar it was last drawn with. */
+    fun texturesOf(world: WorldSource): WorldTextures {
+        val picked = worldTextures[world.id] ?: WorldTextures()
+        return picked.copy(coreJar = loadedTextures[world.id]?.coreJar ?: picked.coreJar)
+    }
+
+    /** What [world] is drawn with right now; null before the Textured mode was used or when nothing was found. */
+    fun loadedTexturesOf(world: WorldSource): LoadedTextures? = loadedTextures[world.id]
+
+    /** Draws [world] with these files (resource packs, top first, and/or a client jar); empty goes back to the default. */
+    fun chooseTextures(world: WorldSource, files: List<Path>) {
+        worldTextures[world.id] = WorldTextures(files, coreJar = texturesOf(world).coreJar)
+        changed()
+        refreshTextures(force = true)
+    }
+
+    /** Sets the default textures for worlds without their own; empty finds a client jar automatically. */
+    fun chooseDefaultTextures(files: List<Path>) {
+        TextureFiles.chosen = files
+        refreshTextures(force = true)
+    }
+
+    /**
+     * Loads textures for every open world in the background. Each world gets its picked files (or the
+     * default) on top of a client jar: the one it used before, else the jar of its own version, else the
+     * newest. Only runs in the Textured mode, unless [force]d; without textures that mode looks like Blocks.
+     */
+    private fun refreshTextures(force: Boolean = false) {
+        if (renderSettings.mode != RenderMode.Textured && !force) return
+        val request = ++textureRequest
+        val wanted = worlds.map { w -> Triple(w.id, texturesOf(w), w.versionLabel.takeIf { (w.dataVersion ?: 0) >= FLATTENING_DATA_VERSION }) }
         texturesLoading = true
         scope.launch(Dispatchers.IO) {
-            val files = TextureFiles.sources()
-            val assets = files?.let { runCatching { AssetSource(it) }.onFailure { e -> e.printStackTrace() }.getOrNull() }
-            withContext(Dispatchers.Main) {
-                texturesLoading = false
-                val old = textureAssets
-                textureAssets = assets
-                textureLabel = assets?.label
-                tiles.textures = assets?.let(::BlockModels)
-                old?.close()
-                if (assets == null) {
-                    notify("No Minecraft installation found for textures. Choose a client jar or resource pack in the View panel.", warning = true)
+            textureLock.withLock {
+                if (request != textureRequest) return@withLock
+                val sources = wanted.associate { (id, picked, version) -> id to TextureFiles.sources(picked.files, picked.coreJar, version) }
+                val models = HashMap<String, BlockModels>()
+                for ((id, files) in sources) {
+                    files ?: continue
+                    val set = textureSets[files] ?: runCatching { AssetSource(files).let { it to BlockModels(it) } }
+                        .onFailure { it.printStackTrace() }.getOrNull()?.also { textureSets[files] = it }
+                    set?.let { models[id] = it.second }
+                }
+                val loaded = sources.mapNotNull { (id, files) -> files?.let { id to LoadedTextures(it, TextureFiles.coreJarOf(it)) } }.toMap()
+                val applied = withContext(Dispatchers.Main) {
+                    if (request != textureRequest) return@withContext false
+                    tiles.textures = models
+                    loadedTextures.clear()
+                    loadedTextures.putAll(loaded)
+                    texturesLoading = false
+                    val missing = worlds.filter { it.id !in loaded }
+                    if (missing.isNotEmpty() && renderSettings.mode == RenderMode.Textured) {
+                        notify("No Minecraft client jar found for textures of ${missing.joinToString { "\"${it.name}\"" }}. Choose one in the View panel.", warning = true)
+                    }
+                    true
+                }
+                if (applied) {
+                    val used = sources.values.toSet()
+                    textureSets.keys.filter { it !in used }.forEach { textureSets.remove(it)?.first?.close() }
                 }
             }
         }
-    }
-
-    /** Uses these files (resource packs and/or a client jar) for textures; empty goes back to finding a jar. */
-    fun chooseTextures(files: List<Path>) {
-        TextureFiles.chosen = files
-        loadTextures(force = true)
     }
 
     fun selectTool(t: Tool) {
@@ -365,6 +429,7 @@ class EditorState {
     fun undo() {
         val edit = history.undo() ?: return
         historyRevision++
+        changed()
         stacks[edit.world.id] = edit.before
         if (edit.world != activeWorld) openWorld(edit.world)
         notify("Undid ${edit.label.lowercase()}")
@@ -373,6 +438,7 @@ class EditorState {
     fun redo() {
         val edit = history.redo() ?: return
         historyRevision++
+        changed()
         stacks[edit.world.id] = edit.after
         if (edit.world != activeWorld) openWorld(edit.world)
         notify("Redid ${edit.label.lowercase()}")
@@ -387,6 +453,7 @@ class EditorState {
         stacks[world.id] = after
         history.push(StackEdit(world, label, before, after))
         historyRevision++
+        changed()
         return true
     }
 
@@ -417,6 +484,7 @@ class EditorState {
         if (after != before) {
             history.push(StackEdit(world, strokeLabel, before, after))
             historyRevision++
+            changed()
         }
     }
 
@@ -640,6 +708,182 @@ class EditorState {
         notice = Notice(text, warning)
     }
 
+    // ---- Projects ----
+
+    /** File the project was last saved to or opened from; null for a new, unsaved project. */
+    var projectFile by mutableStateOf<Path?>(null)
+        private set
+    private var changeCount by mutableIntStateOf(0)
+    private var savedChangeCount by mutableIntStateOf(0)
+
+    /** True when worlds or layers changed since the project was last saved, opened or created. */
+    val projectDirty: Boolean get() = changeCount != savedChangeCount
+    val projectName: String get() = projectFile?.fileName?.toString()?.removeSuffix(".${ProjectFile.EXTENSION}") ?: "Untitled"
+
+    private fun changed() { changeCount++ }
+
+    /** Treats the current worlds and layers as saved (e.g. the demo worlds shown at startup). */
+    fun markSaved() { savedChangeCount = changeCount }
+
+    /** Writes the project to [file]; returns false (with a message) when that fails. */
+    fun saveProject(file: Path): Boolean {
+        val snapshot = ProjectSnapshot(worlds.mapNotNull { stacks[it.id] }, activeWorld, selection, editorSettings(), worlds.associateWith(::texturesOf))
+        return runCatching { ProjectFile.write(file, snapshot, AppInfo.version) }
+            .onSuccess {
+                projectFile = file
+                markSaved()
+                WorldLibrary.rememberProject(file)
+                notify("Saved project ${file.fileName}")
+            }
+            .onFailure { notify("Could not save ${file.fileName}: ${it.message}", warning = true) }
+            .isSuccess
+    }
+
+    /** Closes every world and starts an empty, unsaved project. */
+    fun newProject() {
+        replaceWorlds(emptyList())
+        projectFile = null
+        loading = null
+        markSaved()
+    }
+
+    /**
+     * Opens a project in the background: its worlds (reusing ones already open), layers,
+     * selection, camera and settings. Worlds that can't be found are left out with a warning.
+     */
+    fun openProject(file: Path) {
+        if (busy) return notify("Wait for the current task to finish", warning = true)
+        busy = true
+        val title = "Opening ${file.fileName}"
+        loading = LoadingStep(title, "Reading project", waitForTiles = false)
+        val open = worlds.associateBy { WorldLocation.of(it) }
+        val throttle = ProgressThrottle()
+        scope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val doc = ProjectFile.read(file)
+                val failed = ArrayList<String>()
+                val opened = doc.worlds.mapIndexed { i, location ->
+                    open[location] ?: runCatching {
+                        location.open { done, total ->
+                            if (throttle.ready(done == total)) scope.launch(Dispatchers.Main) {
+                                if (busy) loading = LoadingStep(title, "World ${i + 1} / ${doc.worlds.size}: scanning region files $done / $total",
+                                    done.toFloat() / total, waitForTiles = false)
+                            }
+                        }
+                    }.onFailure { failed += ((location as? WorldLocation.Folder)?.path?.fileName ?: location).toString() }.getOrNull()
+                }
+                Triple(doc, opened, failed)
+            }
+            withContext(Dispatchers.Main) {
+                busy = false
+                result.onSuccess { (doc, opened, failed) -> applyProject(file, doc, opened, failed) }
+                    .onFailure {
+                        loading = null
+                        notify("Could not open ${file.fileName}: ${it.message}", warning = true)
+                    }
+            }
+        }
+    }
+
+    private fun applyProject(file: Path, doc: ProjectDocument, opened: List<WorldSource?>, failed: List<String>) {
+        val restored = doc.stacks(opened)
+        replaceWorlds(opened.filterNotNull().map { w -> restored.stacks.firstOrNull { it.world == w } ?: LayerStack.of(w) })
+        for ((world, textures) in opened.zip(doc.textures)) if (world != null && !textures.isDefault) worldTextures[world.id] = textures
+        applyEditorSettings(doc.editor)
+        refreshTextures()
+        projectFile = file
+        WorldLibrary.rememberProject(file)
+        for (world in opened) (world as? AnvilWorld)?.folder?.let(WorldLibrary::remember)
+        val active = doc.activeWorld?.let(opened::getOrNull)?.takeIf { it in worlds } ?: worlds.firstOrNull()
+        if (active == null) loading = null else {
+            openWorld(active)
+            selection = doc.selection.filterTo(HashSet(), ::isSelectable)
+            restoreCamera(doc.editor)
+        }
+        markSaved()
+        notify(
+            when {
+                failed.isNotEmpty() -> "Opened ${projectName}, but could not open ${failed.joinToString()}" +
+                    if (restored.missingChunks > 0) " (${restored.missingChunks} chunks from it left out)" else ""
+                else -> "Opened project ${projectName}"
+            },
+            warning = failed.isNotEmpty(),
+        )
+    }
+
+    /** Swaps every open world for [next] (worlds in both stay open) and forgets undo, clipboard and selection. */
+    private fun replaceWorlds(next: List<LayerStack>) {
+        val keep = next.mapTo(HashSet()) { it.world }
+        for (world in worlds) if (world !in keep) (world as? AnvilWorld)?.close()
+        history.removeIf { true }
+        historyRevision++
+        clipboard = null
+        pasteMode = false
+        selection = emptySet()
+        hovered = null
+        activeWorld = null
+        worlds.clear()
+        stacks.clear()
+        worldTextures.clear()
+        loadedTextures.clear()
+        for (stack in next) if (worlds.none { it.id == stack.world.id }) {
+            worlds += stack.world
+            stacks[stack.world.id] = stack
+        }
+    }
+
+    /** View and editor preferences stored in a project, as XML attribute names and values. */
+    private fun editorSettings(): Map<String, String> = linkedMapOf(
+        "render-mode" to renderSettings.mode.name,
+        "height-scale" to renderSettings.heightScale.toString(),
+        "chunk-borders" to renderSettings.chunkBorders.toString(),
+        "layer-colors" to showLayerColors.toString(),
+        "rotation" to rotation.toString(),
+        "center-u" to view.centerU.toString(),
+        "center-v" to view.centerV.toString(),
+        "zoom" to view.zoom.toString(),
+        "tool" to tool.name,
+        "select-mode" to selectMode.name,
+        "brush-size" to brushSize.toString(),
+        "left-dock" to leftDockVisible.toString(),
+        "left-tab" to leftTab.name,
+        "left-dock-width" to leftDockWidth.value.toString(),
+        "right-dock" to rightDockVisible.toString(),
+        "right-dock-width" to rightDockWidth.value.toString(),
+        "inspector" to inspectorVisible.toString(),
+    )
+
+    /** Applies stored settings; missing or unreadable values keep their current setting. */
+    private fun applyEditorSettings(s: Map<String, String>) {
+        fun bool(key: String) = s[key]?.toBooleanStrictOrNull()
+        fun float(key: String) = s[key]?.toFloatOrNull()
+        updateRenderSettings(renderSettings.copy(
+            mode = s["render-mode"]?.let { m -> RenderMode.entries.firstOrNull { it.name == m } } ?: renderSettings.mode,
+            heightScale = float("height-scale") ?: renderSettings.heightScale,
+            chunkBorders = bool("chunk-borders") ?: renderSettings.chunkBorders,
+        ))
+        showLayerColors = bool("layer-colors") ?: showLayerColors
+        s["rotation"]?.toIntOrNull()?.let { rotation = Rotation.normalize(it) }
+        s["tool"]?.let { t -> Tool.entries.firstOrNull { it.name == t } }?.let { tool = it }
+        s["select-mode"]?.let { m -> SelectMode.entries.firstOrNull { it.name == m } }?.let { selectMode = it }
+        s["brush-size"]?.toIntOrNull()?.takeIf { it in BRUSH_SIZES }?.let { brushSize = it }
+        leftDockVisible = bool("left-dock") ?: leftDockVisible
+        s["left-tab"]?.let { t -> DockTab.entries.firstOrNull { it.name == t } }?.let { leftTab = it }
+        float("left-dock-width")?.let { leftDockWidth = it.dp.coerceIn(200.dp, 520.dp) }
+        rightDockVisible = bool("right-dock") ?: rightDockVisible
+        float("right-dock-width")?.let { rightDockWidth = it.dp.coerceIn(200.dp, 520.dp) }
+        inspectorVisible = bool("inspector") ?: inspectorVisible
+    }
+
+    /** Puts the camera back where it was saved, instead of the fit [openWorld] just did. */
+    private fun restoreCamera(s: Map<String, String>) {
+        val u = s["center-u"]?.toDoubleOrNull() ?: return
+        val v = s["center-v"]?.toDoubleOrNull() ?: return
+        val zoom = s["zoom"]?.toDoubleOrNull() ?: return
+        view = IsoView(u, v, zoom.coerceIn(IsoView.MIN_ZOOM, IsoView.MAX_ZOOM))
+        fitPending = false
+    }
+
     // ---- Camera ----
 
     fun zoomBy(factor: Double) {
@@ -694,7 +938,7 @@ class EditorState {
 
     fun dispose() {
         scope.cancel()
-        textureAssets?.close()
+        textureSets.values.forEach { it.first.close() }
         worlds.forEach { (it as? AnvilWorld)?.close() }
     }
 
@@ -713,5 +957,7 @@ class EditorState {
         /** Typical terrain height used to center the camera before chunk heights are known. */
         const val SURFACE_Y = 64.0
         private const val MAX_CHUNKS_ON_FIT = 4000
+        /** 1.13: block names from here on match the client jar of the world's own version. Older worlds need a newer jar. */
+        private const val FLATTENING_DATA_VERSION = 1519
     }
 }

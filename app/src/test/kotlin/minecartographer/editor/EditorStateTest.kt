@@ -5,6 +5,8 @@ import minecartographer.core.DemoWorld
 import minecartographer.core.edit.BaseLayer
 import minecartographer.core.edit.ChunkLayer
 import minecartographer.core.edit.ChunkRef
+import java.nio.file.Files
+import javax.swing.SwingUtilities
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -127,5 +129,47 @@ class EditorStateTest {
         val stack = state.activeStack!!
         assertEquals(1, stack.layers.size)
         assertEquals(ChunkRef(valley, ChunkPos(0, 0)), stack.resolve(ChunkPos(1, 1)))
+    }
+
+    @Test
+    fun `a saved project opens with its layers, selection and camera`() {
+        val file = Files.createTempFile("project", ".mcproj")
+        try {
+            select(ChunkPos(0, 0), ChunkPos(1, 0))
+            state.copy()
+            state.openWorld(hills)
+            state.pasteAt(ChunkPos(5, 5))
+            state.rotate(+1)
+            val pack = file.resolveSibling("Exotic.zip").toAbsolutePath()
+            state.chooseTextures(valley, listOf(pack))
+            val stack = state.activeStack!!
+            val view = state.view
+            assertTrue(state.projectDirty)
+            assertTrue(state.saveProject(file))
+            assertTrue(!state.projectDirty)
+
+            state.newProject()
+            assertTrue(state.worlds.isEmpty())
+
+            state.openProject(file)
+            val deadline = System.currentTimeMillis() + 10_000
+            while (state.busy && System.currentTimeMillis() < deadline) Thread.sleep(10)
+            SwingUtilities.invokeAndWait {} // let the result reach the UI thread
+
+            assertEquals(listOf("Valley", "Hills"), state.worlds.map { it.name })
+            assertEquals("Hills", state.activeWorld?.name)
+            assertEquals(1, state.rotation)
+            assertEquals(view, state.view)
+            assertEquals(setOf(ChunkPos(5, 5), ChunkPos(6, 5)), state.selection)
+            val layer = state.activeStack!!.active as ChunkLayer
+            assertEquals((stack.active as ChunkLayer).name, layer.name)
+            assertEquals(ChunkPos(0, 0), layer.chunks[ChunkPos(5, 5)]?.pos)
+            assertEquals("Valley", layer.chunks[ChunkPos(5, 5)]?.world?.name)
+            assertEquals(listOf(pack), state.texturesOf(state.worlds.first { it.name == "Valley" }).files)
+            assertTrue(state.texturesOf(state.worlds.first { it.name == "Hills" }).files.isEmpty())
+            assertTrue(!state.projectDirty)
+        } finally {
+            Files.deleteIfExists(file)
+        }
     }
 }

@@ -90,7 +90,8 @@ data class LayerStack(
     val world: WorldSource,
     val layers: List<Layer>,
     val activeId: Long,
-    private val nextId: Long,
+    /** Id the next added layer gets. */
+    val nextId: Long,
 ) {
     init {
         require(layers.firstOrNull() is BaseLayer && layers.drop(1).none { it is BaseLayer }) { "Base layer must be at the bottom" }

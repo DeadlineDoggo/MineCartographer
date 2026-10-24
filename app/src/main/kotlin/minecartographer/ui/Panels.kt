@@ -244,13 +244,36 @@ fun ViewPanel(state: EditorState) {
         SectionHeader("RENDER MODE", Modifier.padding(top = 0.dp))
         Segmented(RenderMode.entries, settings.mode, { it.label }) { state.setRenderMode(it) }
         Txt(settings.mode.description, color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 6.dp))
-        if (settings.mode == RenderMode.Textured) {
-            KeyValue("Textures", state.textureLabel ?: "none found")
-            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TextButton("Choose…") { FileDialogs.chooseTextureFiles()?.let(state::chooseTextures) }
-                if (TextureFiles.chosen.isNotEmpty()) TextButton("Find automatically") { state.chooseTextures(emptyList()) }
+        val world = state.activeWorld
+        if (settings.mode == RenderMode.Textured && world != null) {
+            SectionHeader("TEXTURES OF ${world.name.uppercase()}")
+            val own = state.texturesOf(world).files.isNotEmpty()
+            val loaded = state.loadedTexturesOf(world)
+            Txt(
+                when {
+                    state.texturesLoading -> "Loading…"
+                    loaded == null -> "None found"
+                    else -> loaded.label
+                },
+                size = 12.sp, mono = true, maxLines = 3,
+            )
+            Txt(if (own) "Picked for this world" else "Default", color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 2.dp))
+            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                TextButton("Choose…") { FileDialogs.chooseTextureFiles()?.let { state.chooseTextures(world, it) } }
+                if (own) TextButton("Use default") { state.chooseTextures(world, emptyList()) }
             }
-            Txt("Read from your Minecraft installation: a client jar, plus resource packs if you add them.",
+            Txt("Chunks pasted from other worlds keep the textures of the world they come from.",
+                color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 6.dp))
+
+            SectionHeader("DEFAULT TEXTURES")
+            val defaults = TextureFiles.chosen
+            Txt(if (defaults.isEmpty()) "Found automatically" else defaults.joinToString(" + ") { it.fileName.toString() }, size = 12.sp, mono = true, maxLines = 3)
+            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                TextButton("Choose…") { FileDialogs.chooseTextureFiles()?.let(state::chooseDefaultTextures) }
+                if (defaults.isNotEmpty()) TextButton("Find automatically") { state.chooseDefaultTextures(emptyList()) }
+            }
+            Txt("For worlds without their own: resource packs on a Minecraft client jar. Found automatically, a world " +
+                "uses the jar of its own version when it's installed (1.13 and newer), otherwise the newest one.",
                 color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 6.dp))
         }
         SectionHeader("DISPLAY")

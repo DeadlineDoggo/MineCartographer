@@ -2,6 +2,7 @@ package minecartographer.textures
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 import java.util.prefs.Preferences
 import java.util.zip.ZipFile
 import kotlin.io.path.exists
@@ -19,30 +20,48 @@ object TextureFiles {
     private val prefs = Preferences.userRoot().node("minecartographer")
     private const val CHOSEN_KEY = "textureFiles"
 
-    /** Files the user picked (resource packs first, then a jar), or empty to find a jar automatically. */
+    /** Default files for worlds without their own (resource packs first, then a jar), or empty to find a jar automatically. */
     var chosen: List<Path>
         get() = prefs.get(CHOSEN_KEY, "").split('\n').filter { it.isNotBlank() }.map { Path.of(it) }.filter { it.exists() }
         set(value) = prefs.put(CHOSEN_KEY, value.joinToString("\n"))
 
-    /** What to read textures from: the user's choice, else the newest client jar found; null if nothing usable. */
-    fun sources(): List<Path>? {
-        val picked = chosen
-        if (picked.isNotEmpty()) {
-            // A resource pack alone may lack blockstates and models; the client jar fills those in.
-            return if (picked.any(::isClientJar)) picked else picked + listOfNotNull(findClientJar())
-        }
-        return findClientJar()?.let(::listOf)
+    /**
+     * What to read textures from: [picked] files (the default [chosen] when empty) on top of a client jar,
+     * which is the first usable of: one among [picked], [coreJar] (the one used last time), the jar of
+     * [version], the newest release. Null if nothing usable was found.
+     */
+    fun sources(picked: List<Path> = emptyList(), coreJar: Path? = null, version: String? = null): List<Path>? {
+        val files = picked.ifEmpty { chosen }.filter { it.exists() }
+        // A resource pack alone may lack blockstates and models; the client jar fills those in.
+        if (files.any(::isClientJar)) return files
+        val jar = coreJar?.takeIf { it.isRegularFile() && isClientJar(it) } ?: findClientJar(version)
+        return (files + listOfNotNull(jar)).ifEmpty { null }
     }
 
-    fun findClientJar(): Path? = candidates()
-        .filter(::isClientJar)
-        .sortedWith(compareByDescending<Path> { isRelease(it) }.thenByDescending { versionKey(it) })
-        .firstOrNull()
+    /** The client jar among [files] (the vanilla assets under any resource packs), if there is one. */
+    fun coreJarOf(files: List<Path>): Path? = files.lastOrNull(::isClientJar)
+
+    /** The client jar of [version] (e.g. "1.20.1") if installed, else the newest release found. */
+    fun findClientJar(version: String? = null): Path? {
+        val jars = candidates().filter(::isClientJar)
+        if (version != null) jars.firstOrNull { jarVersion(it) == version }?.let { return it }
+        return jars.sortedWith(compareByDescending<Path> { isRelease(it) }.thenByDescending { versionKey(it) }).firstOrNull()
+    }
+
+    private fun jarVersion(jar: Path) = jar.name.removeSuffix(".jar").removePrefix("minecraft-").removeSuffix("-client")
 
     /** True for a zip that has the vanilla block assets (a client jar; mod loader jars don't). */
-    fun isClientJar(file: Path): Boolean = runCatching {
-        ZipFile(file.toFile()).use { it.getEntry("assets/minecraft/blockstates/stone.json") != null && it.getEntry("assets/minecraft/models/block/cube_all.json") != null }
-    }.getOrDefault(false)
+    fun isClientJar(file: Path): Boolean {
+        // Cached by path and modification time: every world looks through all installed jars.
+        val key = file.toAbsolutePath().normalize().toString() + "@" + runCatching { Files.getLastModifiedTime(file).toMillis() }.getOrDefault(0)
+        return clientJars.getOrPut(key) {
+            runCatching {
+                ZipFile(file.toFile()).use { it.getEntry("assets/minecraft/blockstates/stone.json") != null && it.getEntry("assets/minecraft/models/block/cube_all.json") != null }
+            }.getOrDefault(false)
+        }
+    }
+
+    private val clientJars = ConcurrentHashMap<String, Boolean>()
 
     private fun candidates(): List<Path> {
         val appData = System.getenv("APPDATA")?.let { Path.of(it) }
@@ -71,7 +90,7 @@ object TextureFiles {
 
     private val RELEASE = Regex("""\d+(\.\d+)+""")
 
-    private fun isRelease(jar: Path) = RELEASE.matches(jar.name.removeSuffix(".jar").removePrefix("minecraft-").removeSuffix("-client"))
+    private fun isRelease(jar: Path) = RELEASE.matches(jarVersion(jar))
 
     /** Orders "1.20.1" below "1.21.11" below "26.1.2"; non-numeric parts count as 0. */
     private fun versionKey(jar: Path): Long {

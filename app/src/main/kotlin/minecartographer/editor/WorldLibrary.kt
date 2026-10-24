@@ -8,17 +8,26 @@ import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
 import kotlin.io.path.listDirectoryEntries
 
-/** Remembers opened worlds and finds saves in the usual launcher folders. */
+/** Remembers opened worlds and projects, and finds saves in the usual launcher folders. */
 object WorldLibrary {
     private val prefs = Preferences.userRoot().node("minecartographer")
     private const val RECENT_KEY = "recentWorlds"
     private const val MAX_RECENT = 12
+    private const val RECENT_PROJECTS_KEY = "recentProjects"
 
-    fun recent(): List<Path> = prefs.get(RECENT_KEY, "").split('\n').filter { it.isNotBlank() }.map { Path.of(it) }.filter { it.exists() }
+    fun recent(): List<Path> = read(RECENT_KEY)
 
-    fun remember(folder: Path) {
-        val list = (listOf(folder.toAbsolutePath().normalize()) + recent().filterNot { it == folder.toAbsolutePath().normalize() }).take(MAX_RECENT)
-        prefs.put(RECENT_KEY, list.joinToString("\n"))
+    fun remember(folder: Path) = push(RECENT_KEY, folder)
+
+    fun recentProjects(): List<Path> = read(RECENT_PROJECTS_KEY)
+
+    fun rememberProject(file: Path) = push(RECENT_PROJECTS_KEY, file)
+
+    private fun read(key: String): List<Path> = prefs.get(key, "").split('\n').filter { it.isNotBlank() }.map { Path.of(it) }.filter { it.exists() }
+
+    private fun push(key: String, path: Path) {
+        val p = path.toAbsolutePath().normalize()
+        prefs.put(key, (listOf(p) + read(key).filterNot { it == p }).take(MAX_RECENT).joinToString("\n"))
     }
 
     /** Folders that usually contain saves: vanilla launcher, popular launchers, and parents of recent worlds. */

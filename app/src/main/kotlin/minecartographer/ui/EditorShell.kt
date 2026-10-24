@@ -42,6 +42,11 @@ import minecartographer.core.edit.BaseLayer
 import minecartographer.editor.DockTab
 import minecartographer.editor.EditorState
 import minecartographer.editor.Tool
+import minecartographer.editor.WorldLibrary
+import minecartographer.editor.newProjectInteractive
+import minecartographer.editor.openProjectInteractive
+import minecartographer.editor.saveProjectInteractive
+import minecartographer.core.project.ProjectFile
 import minecartographer.viewport.ChunkViewport
 import minecartographer.viewport.RenderMode
 import kotlin.math.roundToInt
@@ -111,7 +116,18 @@ private fun MenuRow(state: EditorState, onExit: () -> Unit) {
 private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = listOf(
     Menu("File") {
         val world = state.activeWorld
+        val recent = WorldLibrary.recentProjects().filter { it != state.projectFile }.take(10)
         listOf(
+            MenuItem("New project", "Ctrl+N", !state.busy) { state.newProjectInteractive() },
+            MenuItem("Open project…", "Ctrl+Shift+O", !state.busy) { state.openProjectInteractive() },
+            SubMenu("Recent projects", recent.map { file ->
+                MenuItem(file.fileName.toString().removeSuffix(".${ProjectFile.EXTENSION}"), file.parent?.fileName?.toString()) {
+                    state.openProjectInteractive(file)
+                }
+            }, enabled = recent.isNotEmpty() && !state.busy),
+            MenuItem("Save project", "Ctrl+S", state.worlds.isNotEmpty()) { state.saveProjectInteractive() },
+            MenuItem("Save project as…", "Ctrl+Alt+S", state.worlds.isNotEmpty()) { state.saveProjectInteractive(saveAs = true) },
+            MenuSeparator,
             MenuItem("Open world folder…", "Ctrl+O", !state.busy) { FileDialogs.chooseWorldFolder()?.let(state::openWorldFolder) },
             MenuItem("Close world", enabled = world != null) { world?.let(state::closeWorld) },
             MenuSeparator,
