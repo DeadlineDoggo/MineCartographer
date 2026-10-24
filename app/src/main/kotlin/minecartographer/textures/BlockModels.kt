@@ -187,6 +187,8 @@ object FlatModels : BlockModelSource {
         cache.keys.removeIf { it.name in names }
     }
 
+    fun forgetAll() = cache.clear()
+
     override fun model(state: BlockState, turns: Int): BlockModel = cache.getOrPut(state) {
         val look = BlockColors.look(state)
         val path = state.path
@@ -231,6 +233,21 @@ class AssetSource(val files: List<Path>, cachedIndex: Map<String, Int>? = null) 
     }
 
     fun has(path: String) = path in index
+
+    /** Block texture ids (`ns:blocks/x` before 1.13, `ns:block/x` after) per index into [files], sorted. */
+    val blockTextures: Map<Int, List<String>> by lazy {
+        val out = HashMap<Int, MutableList<String>>()
+        for ((path, file) in index) {
+            val m = BLOCK_PNG.matchEntire(path) ?: continue
+            out.getOrPut(file) { ArrayList() } += "${m.groupValues[1]}:${m.groupValues[2]}/${m.groupValues[3]}"
+        }
+        out.mapValues { it.value.sorted() }
+    }
+
+    private companion object {
+        // models/: blocks drawn by the mod's own renderer (BiblioCraft) have their textures there.
+        val BLOCK_PNG = Regex("""assets/([^/]+)/textures/(blocks?|models)/(.+)\.png""")
+    }
 
     /** The archive at [i] in [files], opened when first asked (class scans of 1.6 mods read their classes). */
     internal fun zipAt(i: Int): ZipFile = zip(i)
@@ -301,15 +318,6 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
     /** True when the user picked a texture for [key] (`ns:name[meta=n]`) or its whole block. */
     fun isOverridden(key: String) = overrides.containsKey(key) || overrides.containsKey(BlockColors.stateOf(key).name)
 
-    /** Where [state]'s look comes from, for the block textures dialog. */
-    fun describe(state: BlockState): String {
-        val (ns, path) = split(state.name)
-        if (isOverridden(BlockColors.keyOf(state.name, state.properties["meta"] ?: "0")) || overrides.containsKey(state.name)) {
-            return "your choice: " + (textureChoice(state)?.top ?: "?")
-        }
-        if (blockstate(ns, path) != null) return "blockstate" + (variantOf(state).properties.entries.firstOrNull { it.key != "meta" }?.let { " (${it.key}=${it.value})" } ?: "")
-        return textureChoice(state)?.let { "${it.top} · ${it.source}" } ?: "guessed from the name"
-    }
 
     /** Makes these 1.6 blocks (and their keys in the mods' config files) known, so their textures can be guessed. */
     fun registerLegacy(blocks: Collection<ForgeData.LegacyBlock>, configKeys: Map<Int, List<String>>) {
@@ -335,7 +343,7 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
     /** `extrabiomesxl:leavesfirfancy` (a 1.6 icon name) -> `extrabiomesxl:blocks/leavesfirfancy`; full ids pass through. */
     private fun textureId(icon: String): String {
         val (ns, path) = split(icon)
-        return if (path.startsWith("blocks/") || path.startsWith("block/")) "$ns:$path" else "$ns:blocks/$path"
+        return if (path.startsWith("blocks/") || path.startsWith("block/") || path.startsWith("models/")) "$ns:$path" else "$ns:blocks/$path"
     }
 
     private fun isPlant(texture: String) = PLANT_WORDS.any { it in texture.lowercase() }
@@ -383,15 +391,52 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
         }
         if (textures.isEmpty()) return null
         if ("cross" in textures || "plant" in textures) return BlockLook.SKIP
-        val model = ResolvedModel(textures, null)
-        val key = TOP_TEXTURES.firstOrNull { it in textures } ?: textures.keys.first()
-        // Connected-texture mods (Chisel) name textures that only exist as CTM sheets; any other texture of the
-        // same blockstate (the same family of blocks) is a better color than none.
-        val rgb = resolveTexture(model, "#$key")?.averageRgb
-            ?: textureNames(json).firstNotNullOfOrNull { texture(it)?.averageRgb } ?: return null
+        val rgb = topTextureId(textures, json)?.let { texture(it) }?.averageRgb ?: return null
         // Leaves and grass textures are gray and colored by the biome; mods often ship them colored already.
         return BlockColors.solidLook(if (Tints.biomeColored(path) && isGrayish(rgb)) multiply(rgb, Tints.of(path)) else rgb)
     }
+
+    /**
+     * The texture on top of a block given its model textures: the top-like variable, resolved. Connected-texture mods
+     * (Chisel) name textures that only exist as CTM sheets; any other texture of the same blockstate (the same family
+     * of blocks) is better than none.
+     */
+    private fun topTextureId(textures: Map<String, String>, json: Map<*, *>): String? {
+        val model = ResolvedModel(textures, null)
+        val key = TOP_TEXTURES.firstOrNull { it in textures } ?: textures.keys.firstOrNull() ?: return null
+        return resolveTextureId(model, "#$key")?.takeIf { texture(it) != null }
+            ?: textureNames(json).firstOrNull { texture(it)?.averageRgb != null }
+    }
+
+    /** Where a block's look comes from, for the mods window. */
+    enum class Source(val label: String) { CHOICE("your choice"), BLOCKSTATE("blockstate"), GUESS("guessed"), UNKNOWN("unknown") }
+
+    /** How [state] is drawn: where from, the texture id on top (null when unknown) and a detail line. */
+    data class BlockInfo(val source: Source, val texture: String?, val detail: String)
+
+    fun info(state: BlockState): BlockInfo {
+        val (ns, path) = split(state.name)
+        if (isOverridden(BlockColors.keyOf(state.name, state.properties["meta"] ?: "0")) || overrides.containsKey(state.name)) {
+            val top = textureChoice(state)?.top
+            return BlockInfo(Source.CHOICE, top, top ?: "")
+        }
+        val json = blockstate(ns, path)
+        if (json != null) {
+            val textures = LinkedHashMap<String, String>()
+            val expanded = expandMeta(state, json)
+            for (part in parts(expanded, json, firstOnly = true)) {
+                part.model?.let { resolve(it) }?.textures?.forEach { (k, v) -> textures.putIfAbsent(k, v) }
+                textures.putAll(part.textures)
+            }
+            val variant = expanded.properties.entries.firstOrNull { it.key != "meta" }?.let { "${it.key}=${it.value}" }
+            return BlockInfo(Source.BLOCKSTATE, topTextureId(textures, json), listOfNotNull("blockstate", variant).joinToString(" · "))
+        }
+        val choice = textureChoice(state) ?: return BlockInfo(Source.UNKNOWN, null, "no texture found; color guessed from the name")
+        return BlockInfo(Source.GUESS, choice.top, choice.source)
+    }
+
+    /** The mod id a 1.6 block belongs to as level.dat says it (`TConstruct`), if it was registered. */
+    fun legacyModId(name: String): String? = legacyBlocks[name]?.first?.modId
 
     /** Every texture id a blockstate names directly (Forge blockstates list textures inline), in file order. */
     private fun textureNames(json: Any?): Sequence<String> = sequence {
@@ -633,6 +678,15 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
     }
 
     /** "#side" -> the model's "side" texture, following references; null when it doesn't resolve. */
+    private fun resolveTextureId(model: ResolvedModel, ref: String): String? {
+        var name = ref
+        repeat(8) {
+            if (!name.startsWith("#")) return name
+            name = model.textures[name.substring(1)] ?: return null
+        }
+        return null
+    }
+
     private fun resolveTexture(model: ResolvedModel, ref: String): Texture? {
         var name = ref
         repeat(8) {

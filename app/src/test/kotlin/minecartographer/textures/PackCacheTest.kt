@@ -107,6 +107,18 @@ class PackCacheTest {
     }
 
     @Test
+    fun `rescan deletes a cache from disk and memory`() {
+        val mod = zip("mod.jar", "assets/m/a.json" to "{}")
+        val cache = PackCache.of(listOf(mod), root)
+        cache.putLook("m:a", BlockColors.solidLook(0x112233))
+        cache.save()
+        PackCache.delete(cache)
+        assertTrue(!cache.dir.exists())
+        val fresh = PackCache.of(listOf(mod), root)
+        assertTrue(fresh !== cache && fresh.looks.isEmpty())
+    }
+
+    @Test
     fun `unused caches are pruned`() {
         val mod = zip("mod.jar", "assets/m/a.json" to "{}")
         val cache = PackCache.of(listOf(mod), root)

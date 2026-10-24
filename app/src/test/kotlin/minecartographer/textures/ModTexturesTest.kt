@@ -172,6 +172,13 @@ class ModTexturesTest {
         val found = ModLocator.locate(AnvilWorld.open(world))
         assertEquals(listOf(mods.resolve("bop.jar")), found.archives, "only archives with assets of this world's mods")
         assertEquals(listOf("supplementaries"), found.missing.map { it.id }, "geckolib is found even without assets")
+
+        // An archive the user picks counts for that mod, whatever its metadata says.
+        val picked = zip("elsewhere.jar", "assets/supp/blockstates/a.json" to "{}")
+        val withPick = ModLocator.locate(AnvilWorld.open(world), manual = mapOf("supplementaries" to picked))
+        assertTrue(withPick.missing.isEmpty())
+        assertEquals(picked, withPick.providers["supplementaries"])
+        assertTrue(picked in withPick.archives)
     }
 
     @Test

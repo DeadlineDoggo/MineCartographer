@@ -32,19 +32,22 @@ class LegacyTextures(private val assets: AssetSource) {
         fun variant(meta: Int): Variant = variants[Math.floorMod(meta, variants.size)]
     }
 
-    private class Pack(val file: Int, val modIds: Set<String>, val pngs: List<String>, val namespaces: Set<String>)
+    private class Pack(val file: Int, val modIds: Set<String>, val pngs: List<String>, val namespaces: Set<String>, val modelPngs: List<String>)
 
     private val packs: List<Pack> by lazy {
         val byFile = HashMap<Int, MutableList<String>>()
+        val models = HashMap<Int, MutableList<String>>()
         for ((path, file) in assets.index) {
             if (!path.endsWith(".png")) continue
-            val m = BLOCK_TEXTURE.matchEntire(path) ?: continue
-            byFile.getOrPut(file) { ArrayList() } += "${m.groupValues[1]}:${m.groupValues[2]}"
+            BLOCK_TEXTURE.matchEntire(path)?.let { m -> byFile.getOrPut(file) { ArrayList() } += "${m.groupValues[1]}:${m.groupValues[2]}" }
+            MODEL_TEXTURE.matchEntire(path)?.let { m -> models.getOrPut(file) { ArrayList() } += "${m.groupValues[1]}:models/${m.groupValues[2]}" }
         }
         assets.files.indices.mapNotNull { i ->
-            val pngs = byFile[i]?.sorted() ?: return@mapNotNull null
+            val pngs = byFile[i]?.sorted().orEmpty()
+            val modelPngs = models[i]?.sorted().orEmpty()
+            if (pngs.isEmpty() && modelPngs.isEmpty()) return@mapNotNull null
             val ids = ModLocator.archive(assets.files[i])?.modIds.orEmpty().mapTo(HashSet()) { it.lowercase() }
-            Pack(i, ids, pngs, pngs.mapTo(HashSet()) { it.substringBefore(':') })
+            Pack(i, ids, pngs, (pngs + modelPngs).mapTo(HashSet()) { it.substringBefore(':') }, modelPngs)
         }
     }
 
@@ -86,6 +89,14 @@ class LegacyTextures(private val assets: AssetSource) {
         for (pack in own) for (key in configKeys) {
             scan(pack.file).constructedAfter[key]?.forEach { classChoice(it, "class after config key", 70) }
         }
+        // A block class named after its config key or its name: customlog.id -> BlockCustomLog, quarterlog0.id -> BlockQuarterLog.
+        val itemStem = itemClass.substringAfterLast('/').removePrefix("ItemBlock").removePrefix("Item").removeSuffix("ItemBlock").removeSuffix("Item")
+        val stems = (configKeys.map(::stripConfigKey) + block.forcedName.removePrefix("tile.").split('.').lastOrNull().orEmpty() + itemStem)
+            .map { norm(it).trimEnd { c -> c.isDigit() } }.filter { it.length >= 4 }.toSet()
+        if (stems.isNotEmpty()) for (pack in own) for (cls in scan(pack.file).classes.keys) {
+            val simple = norm(cls.substringAfterLast('/').substringBefore('$')).removePrefix("block").removeSuffix("block")
+            if (simple in stems) classChoice(cls, "class named like it", 65)
+        }
         classChoice(itemClass, "item class", 60)
         // Classes the item refers to, when their name shares a word with the item or the block
         // (ItemCustomGreenLeaves -> BlockGreenLeaves); any other class it touches says nothing.
@@ -96,16 +107,48 @@ class LegacyTextures(private val assets: AssetSource) {
                 ?.forEach { classChoice(it, "class of the item", 45) }
         }
 
-        // 3. Words of the name, matched against whole words (or their start) of png names.
+        // 3. Stairs, slabs, walls, fences and panes have no texture of their own: the game draws them with their
+        // material's (acaciastairs.id -> planksacacia; woodslab.id -> every planks texture, one per data value).
+        val allNames = names + block.forcedName + itemClass.substringAfterLast('/')
+        val shaped = allNames.flatMap(::words).firstNotNullOfOrNull { w -> SHAPES.firstOrNull { w.endsWith(it) && w.length >= it.length }?.let { w to it } }
+        if (shaped != null) for (pack in own) {
+            val material = singular(shaped.first.removeSuffix(shaped.second)).takeIf { it.length >= 3 && it != "wood" && it != "double" }
+            val wooden = allNames.any { "wood" in it.lowercase() || "plank" in it.lowercase() }
+            fun isPlanks(png: String) = words(baseName(png)).any { it.startsWith("plank") }
+            val matches = pack.pngs.filter { png ->
+                val w = words(baseName(png)).map(::singular)
+                (material == null || w.any { it == material || it.startsWith(material) || it.endsWith(material) }) && (!wooden || isPlanks(png))
+            }
+            if (matches.isNotEmpty() && (material != null || wooden)) {
+                candidates += Choice(variants(matches.sortedByDescending { isPlanks(it) }), "material of the ${shaped.second}", 55)
+            }
+        }
+
+        // 4. Words of the name, matched against whole words (or their start) of png names. A word glued to the
+        // mod's name counts without it (biblioseats -> seats); words every png of the mod has count less.
         for (pack in own) {
-            val wanted = (names + block.forcedName).flatMap(::words).map(::singular).filter { it.length >= 3 && it !in commonWords(pack) }.distinct()
-            if (wanted.isEmpty()) continue
-            val scored = pack.pngs.map { png ->
+            val modStem = norm(block.modId.substringBefore('|'))
+            val all = allNames.flatMap(::words).map { w -> stripModPrefix(w, modStem) }.map(::singular).filter { it.length >= 3 && it !in STOP_WORDS }.distinct()
+            val wanted = all.filter { it !in commonWords(pack) }
+            fun score(pngs: List<String>, words: List<String>) = pngs.map { png ->
                 val pngWords = words(baseName(png)).map(::singular)
-                png to wanted.filter { w -> pngWords.any { it == w || (w.length >= 4 && (it.startsWith(w) || it.endsWith(w))) } }.sumOf { it.length }
+                png to words.filter { w -> pngWords.any { it == w || (w.length >= 4 && (it.startsWith(w) || it.endsWith(w))) } }.sumOf { it.length }
             }.filter { it.second >= 3 }
-            val best = scored.maxOfOrNull { it.second } ?: continue
-            candidates += Choice(variants(scored.filter { it.second == best }.map { it.first }), "name words", 20 + best)
+            val scored = score(pack.pngs, wanted)
+            scored.maxOfOrNull { it.second }?.let { best ->
+                candidates += Choice(variants(scored.filter { it.second == best }.map { it.first }), "name words", 20 + best)
+            }
+            if (scored.isEmpty() && all.size > wanted.size) {
+                val common = score(pack.pngs, all)
+                common.maxOfOrNull { it.second }?.let { best ->
+                    candidates += Choice(variants(common.filter { it.second == best }.map { it.first }), "common name words", 5 + best)
+                }
+            }
+            // Blocks the mod draws itself (BiblioCraft) only have textures under models/.
+            val models = score(pack.modelPngs, all)
+            models.maxOfOrNull { it.second }?.let { best ->
+                candidates += Choice(variants(models.filter { it.second == best }.map { it.first }), "name words (model texture)", 10 + best)
+            }
         }
         return candidates.maxByOrNull { it.score }?.let(::withStripFrames)
     }
@@ -154,7 +197,8 @@ class LegacyTextures(private val assets: AssetSource) {
     companion object {
         private const val MAX_ICONS = 40
         private val BLOCK_TEXTURE = Regex("""assets/([^/]+)/textures/blocks/(.+)\.png""")
-        private val STOP_WORDS = setOf("tile", "block", "blocks", "item", "id", "ids")
+        private val MODEL_TEXTURE = Regex("""assets/([^/]+)/textures/models/(.+)\.png""")
+        private val STOP_WORDS = setOf("tile", "block", "blocks", "item", "id", "ids", "models", "model")
         private val SUFFIXES = listOf("fancy", "fast", "opaque", "top", "bottom", "side", "sides", "front", "back", "end",
             "on", "off", "active", "inactive", "lit", "unlit", "still", "flow", "flowing")
 
@@ -162,6 +206,15 @@ class LegacyTextures(private val assets: AssetSource) {
         private val CLASS_WORDS = setOf("item", "block", "blocks", "base", "custom", "multi", "generic", "common")
 
         fun norm(s: String) = s.lowercase().filter { it.isLetterOrDigit() }
+
+        /** Shapes made of another block's material, last word of a name (`acaciastairs`, `woodslab`). */
+        private val SHAPES = listOf("stairs", "stair", "slab", "slabs", "step", "wall", "fence", "pane", "panes", "gate")
+
+        /** `biblioseats` with the mod `BiblioCraft` -> `seats`: the common start of the word and the mod name goes, if 4+ letters. */
+        fun stripModPrefix(word: String, modStem: String): String {
+            val common = word.zip(modStem).takeWhile { (a, b) -> a == b }.size
+            return if (common >= 4 && word.length - common >= 3) word.drop(common) else word
+        }
 
         /** `berries` -> `berry`, `flowers` -> `flower`: names and pngs don't agree on plurals. */
         fun singular(w: String) = when {
@@ -228,7 +281,8 @@ class LegacyTextures(private val assets: AssetSource) {
                             val m = entry.find(l) ?: continue
                             if (hasBlockCategory && categories.none { it.contains("block", true) }) continue
                             val id = m.groupValues[2].toIntOrNull() ?: continue
-                            if (id in 256 until ForgeData.MAX_ID) out.getOrPut(id) { ArrayList() } += m.groupValues[1].trim()
+                            // Terrain blocks of 1.6 mods have ids below 256 too (ExtrabiomesXL red rock: 254).
+                            if (id in 1 until ForgeData.MAX_ID) out.getOrPut(id) { ArrayList() } += m.groupValues[1].trim()
                         }
                     }
                 }

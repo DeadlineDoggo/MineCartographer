@@ -159,7 +159,7 @@ class PackCache private constructor(val dir: Path, val files: List<Path>) {
 
     companion object {
         /** Bumped whenever what is stored, or how it is computed, changes; old caches are then not used. */
-        const val FORMAT = 2
+        const val FORMAT = 4 // 3: 1.6 clues by class name and model textures; 4: shapes, mod-name prefixes
         private const val MAX_CACHED_TEXTURE = 64
         private const val PRUNE_AFTER_DAYS = 60L
 
@@ -182,6 +182,12 @@ class PackCache private constructor(val dir: Path, val files: List<Path>) {
             return open.computeIfAbsent("$root|$key") {
                 PackCache(root.resolve("packs").resolve(key), files).also { it.load() }
             }
+        }
+
+        /** Deletes [cache] from disk and memory: the next [of] for its files starts empty (Rescan). */
+        fun delete(cache: PackCache) {
+            open.entries.removeIf { it.value === cache }
+            runCatching { Files.walk(cache.dir).use { s -> s.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) } } }
         }
 
         /** Forgets caches held in memory, so the next [of] reads them from disk (tests). */

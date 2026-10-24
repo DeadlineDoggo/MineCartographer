@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,6 +19,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -252,105 +257,144 @@ fun SelectionPanel(state: EditorState) {
     }
 }
 
-/** Where a modded world's mods come from, and the ways to find missing ones. Shown in every render mode. */
+/**
+ * Render mode, display options, textures and mods, in that order. Every section has the same shape: a header,
+ * label-value rows, one row of buttons, at most one line of help. Long lists (missing mods, folders) fold.
+ */
+@Composable
+fun ViewPanel(state: EditorState) {
+    val settings = state.renderSettings
+    val world = state.activeWorld
+    val scroll = rememberScrollState()
+    Box(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).then(panelPadding).padding(end = 6.dp)) {
+        SectionHeader("RENDER MODE", Modifier.padding(top = 0.dp))
+        Segmented(RenderMode.entries, settings.mode, { it.label }) { state.setRenderMode(it) }
+        Hint(settings.mode.description)
+
+        SectionHeader("DISPLAY")
+        Checkbox("Chunk borders", settings.chunkBorders) { state.updateRenderSettings(settings.copy(chunkBorders = it)) }
+        Checkbox("Layer colors and erased chunks", state.showLayerColors) { state.showLayerColors = it }
+        Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Txt("Height", Modifier.width(56.dp), color = EditorTheme.textDim, size = 12.sp)
+            Box(Modifier.weight(1f)) {
+                Segmented(listOf(0.5f, 1f, 1.5f, 2f), settings.heightScale, { "${it}×".replace(".0×", "×") }) {
+                    state.updateRenderSettings(settings.copy(heightScale = it))
+                }
+            }
+        }
+
+        (world as? AnvilWorld)?.takeIf { state.hasMods(it) }?.let { ModsSection(state, it) }
+        if (settings.mode == RenderMode.Textured && world != null) TexturesSection(state, world)
+
+        SectionHeader("NAVIGATION")
+        for ((key, action) in listOf("WASD / arrows" to "Move", "Right / middle drag" to "Move", "Mouse wheel" to "Zoom", "F" to "Fit world")) {
+            KeyValue(key, action)
+        }
+    }
+    androidx.compose.foundation.VerticalScrollbar(androidx.compose.foundation.rememberScrollbarAdapter(scroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+    }
+}
+
+/** A world's texture files and the default for the others (Textured mode). */
+@Composable
+private fun TexturesSection(state: EditorState, world: WorldSource) {
+    SectionHeader("TEXTURES")
+    val own = state.texturesOf(world).files.isNotEmpty()
+    val loaded = state.loadedTexturesOf(world)
+    ValueRow("This world", when {
+        state.texturesLoading -> "Loading…"
+        loaded == null -> "None found"
+        else -> loaded.label
+    }, if (own) "picked" else "default")
+    ButtonRow {
+        TextButton("Choose…") { FileDialogs.chooseTextureFiles()?.let { state.chooseTextures(world, it) } }
+        if (own) TextButton("Use default") { state.chooseTextures(world, emptyList()) }
+    }
+    val defaults = TextureFiles.chosen
+    ValueRow("Default", if (defaults.isEmpty()) "Found automatically" else defaults.joinToString(" + ") { it.fileName.toString() }, null)
+    ButtonRow {
+        TextButton("Choose…") { FileDialogs.chooseTextureFiles()?.let(state::chooseDefaultTextures) }
+        if (defaults.isNotEmpty()) TextButton("Find automatically") { state.chooseDefaultTextures(emptyList()) }
+    }
+    Hint("Resource packs over a Minecraft client jar. Worlds from 1.13 on use the jar of their own version when it is installed. Pasted chunks keep their world's textures.")
+}
+
+/** Where a modded world's mods come from and how to find missing ones (every render mode). */
 @Composable
 private fun ModsSection(state: EditorState, world: AnvilWorld) {
     val forge = world.info.forge ?: return
     val loaded = state.loadedTexturesOf(world)
     val total = forge.playedMods.size
-    SectionHeader("MODS OF ${world.name.uppercase()}")
-    Txt(
-        when {
-            loaded != null -> "${total - loaded.missingMods.size} of $total mods found (${loaded.mods.size} archives with textures)"
-            state.texturesLoading -> "Looking for mods…"
-            else -> "$total mods (${forge.generation.label})"
-        },
-        size = 12.sp, maxLines = 2,
-    )
-    loaded?.missingMods?.takeIf { it.isNotEmpty() }?.let { missing ->
-        Txt("Not found: " + missing.joinToString { it.id }, Modifier.padding(top = 4.dp), color = EditorTheme.warning, size = 11.sp, maxLines = 4)
-    }
-    Column(Modifier.padding(top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            TextButton("Search for mods…", enabled = !state.busy) {
-                val start = world.folder.toAbsolutePath().root
-                FileDialogs.chooseFolder("Search for the mods of \"${world.name}\" in (a drive or a backup folder)", start)?.let { state.searchMods(world, it) }
-            }
-            TextButton("Add mod folder…") {
-                FileDialogs.chooseFolder("Folder with the mods of \"${world.name}\"", world.folder)?.let(state::addModFolder)
-            }
+    SectionHeader("MODS")
+    ValueRow("Found", when {
+        loaded != null -> "${total - loaded.missingMods.size} of $total"
+        state.texturesLoading -> "Looking…"
+        else -> "– of $total"
+    }, forge.generation.label)
+    ValueRow("With textures", loaded?.mods?.size?.let { "$it archives" } ?: "–", null)
+    ButtonRow {
+        TextButton("Find mods…", enabled = !state.busy) {
+            FileDialogs.chooseFolder("Find the mods of \"${world.name}\" in (a mods folder, an instance, a backup or a drive)", world.folder.parent)
+                ?.let { state.findMods(world, it) }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            TextButton("Block textures…", enabled = loaded?.mods?.isNotEmpty() == true) { state.blockTexturesDialogVisible = true }
-            if (ModLocator.folders.isNotEmpty()) TextButton("Forget added folders") { state.forgetModFolders() }
+        TextButton("Mods & textures…") { state.modsPanelVisible = !state.modsPanelVisible }
+        TextButton("Rescan", enabled = !state.texturesLoading) { state.rescanTextures() }
+    }
+    loaded?.missingMods?.takeIf { it.isNotEmpty() }?.let { missing ->
+        Fold("Not found (${missing.size})", warning = true) {
+            Txt(missing.joinToString { it.id }, color = EditorTheme.warning, size = 11.sp, maxLines = 20)
         }
     }
     val folders = ModLocator.folders
     if (folders.isNotEmpty()) {
-        Txt("Also searched: " + folders.joinToString("\n"), Modifier.padding(top = 4.dp), color = EditorTheme.textFaint, size = 10.sp, mono = true, maxLines = 6)
+        Fold("Folders searched (${folders.size})") {
+            for (folder in folders) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Txt(shortPath(folder), Modifier.weight(1f), color = EditorTheme.textDim, size = 11.sp, mono = true)
+                IconButton(Icons.Close, "Stop looking here: $folder", size = 20.dp, iconSize = 8.dp) { state.removeModFolder(folder) }
+            }
+        }
     }
-    Txt("Mods are looked for in the save's own instance (its mods folder) and in folders added here. Textures of " +
-        "worlds before 1.8 are guessed; fix single blocks in Block textures.",
-        color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 6.dp), maxLines = 4)
+    Hint("Find mods looks in the folder you pick and everything below it. Before 1.8 textures are guessed; see and fix them in Mods & textures.")
 }
 
+/** Label left, value right (wrapping), an optional faint note under the value. */
 @Composable
-fun ViewPanel(state: EditorState) {
-    val settings = state.renderSettings
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).then(panelPadding)) {
-        SectionHeader("RENDER MODE", Modifier.padding(top = 0.dp))
-        Segmented(RenderMode.entries, settings.mode, { it.label }) { state.setRenderMode(it) }
-        Txt(settings.mode.description, color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 6.dp))
-        val world = state.activeWorld
-        (world as? AnvilWorld)?.takeIf { state.hasMods(it) }?.let { ModsSection(state, it) }
-        if (settings.mode == RenderMode.Textured && world != null) {
-            SectionHeader("TEXTURES OF ${world.name.uppercase()}")
-            val own = state.texturesOf(world).files.isNotEmpty()
-            val loaded = state.loadedTexturesOf(world)
-            Txt(
-                when {
-                    state.texturesLoading -> "Loading…"
-                    loaded == null -> "None found"
-                    else -> loaded.label
-                },
-                size = 12.sp, mono = true, maxLines = 3,
-            )
-            Txt(if (own) "Picked for this world" else "Default", color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 2.dp))
-            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TextButton("Choose…") { FileDialogs.chooseTextureFiles()?.let { state.chooseTextures(world, it) } }
-                if (own) TextButton("Use default") { state.chooseTextures(world, emptyList()) }
-            }
-            Txt("Chunks pasted from other worlds keep the textures of the world they come from.",
-                color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 6.dp))
-
-            SectionHeader("DEFAULT TEXTURES")
-            val defaults = TextureFiles.chosen
-            Txt(if (defaults.isEmpty()) "Found automatically" else defaults.joinToString(" + ") { it.fileName.toString() }, size = 12.sp, mono = true, maxLines = 3)
-            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TextButton("Choose…") { FileDialogs.chooseTextureFiles()?.let(state::chooseDefaultTextures) }
-                if (defaults.isNotEmpty()) TextButton("Find automatically") { state.chooseDefaultTextures(emptyList()) }
-            }
-            Txt("For worlds without their own: resource packs on a Minecraft client jar. Found automatically, a world " +
-                "uses the jar of its own version when it's installed (1.13 and newer), otherwise the newest one.",
-                color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 6.dp))
+private fun ValueRow(label: String, value: String, note: String?) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Txt(label, Modifier.width(92.dp), color = EditorTheme.textDim, size = 12.sp)
+        Column(Modifier.weight(1f)) {
+            Txt(value, size = 12.sp, maxLines = 3)
+            if (note != null) Txt(note, color = EditorTheme.textFaint, size = 11.sp)
         }
-        SectionHeader("DISPLAY")
-        Checkbox("Chunk borders", settings.chunkBorders) {
-            state.updateRenderSettings(settings.copy(chunkBorders = it))
-        }
-        Checkbox("Layer colors and erased chunks", state.showLayerColors) { state.showLayerColors = it }
-        SectionHeader("HEIGHT SCALE")
-        Segmented(listOf(0.5f, 1f, 1.5f, 2f), settings.heightScale, { "${it}×".replace(".0×", "×") }) {
-            state.updateRenderSettings(settings.copy(heightScale = it))
-        }
-        SectionHeader("NAVIGATION")
-        for ((key, action) in listOf(
-            "WASD / arrows" to "Move",
-            "Right / middle drag" to "Move",
-            "Mouse wheel" to "Zoom",
-            "F" to "Fit world",
-        )) KeyValue(key, action)
     }
+}
+
+/** Buttons under the values; they wrap to the next line rather than being cut off in a narrow dock. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun ButtonRow(content: @Composable () -> Unit) =
+    androidx.compose.foundation.layout.FlowRow(
+        Modifier.padding(start = 92.dp, top = 2.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) { content() }
+
+/** Faint help text; wraps instead of being cut off. */
+@Composable
+private fun Hint(text: String) = Txt(text, Modifier.padding(top = 6.dp), color = EditorTheme.textFaint, size = 11.sp, maxLines = 6)
+
+/** A folding list: a clickable title with a caret, the content when open. */
+@Composable
+private fun Fold(title: String, warning: Boolean = false, content: @Composable () -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable { open = !open }.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Txt(if (open) "▾" else "▸", Modifier.width(16.dp), color = EditorTheme.textDim, size = 11.sp)
+        Txt(title, color = if (warning) EditorTheme.warning else EditorTheme.textDim, size = 12.sp)
+    }
+    if (open) Column(Modifier.padding(start = 16.dp, bottom = 4.dp)) { content() }
 }
 
 @Composable
@@ -378,19 +422,11 @@ fun InspectorPanel(state: EditorState) {
                 if (forge.numericIds) KeyValue("Modded block ids", forge.blockNames.size.toString())
                 val loaded = state.loadedTexturesOf(world)
                 KeyValue("Mod archives", when {
-                    loaded != null -> "${loaded.mods.size} found"
+                    loaded != null -> "${loaded.mods.size} with textures"
                     state.texturesLoading -> "Looking…"
                     else -> "–"
                 })
-                loaded?.missingMods?.takeIf { it.isNotEmpty() }?.let { missing ->
-                    Txt("Not found: " + missing.joinToString { it.id }, Modifier.padding(top = 4.dp), color = EditorTheme.warning, size = 11.sp, maxLines = 6)
-                }
-                Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    TextButton("Add mod folder…") {
-                        FileDialogs.chooseFolder("Folder with the mods of \"${world.name}\"", (world as? AnvilWorld)?.folder)?.let(state::addModFolder)
-                    }
-                    TextButton("Block textures…", enabled = loaded?.mods?.isNotEmpty() == true) { state.blockTexturesDialogVisible = true }
-                }
+                loaded?.let { KeyValue("Not found", it.missingMods.size.toString()) }
                 Txt(forge.playedMods.joinToString { if (it.version.isBlank()) it.id else "${it.id} ${it.version}" },
                     Modifier.padding(top = 4.dp), color = EditorTheme.textDim, size = 11.sp, maxLines = 12)
             }

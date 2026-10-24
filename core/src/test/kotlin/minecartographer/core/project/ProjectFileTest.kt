@@ -96,10 +96,11 @@ class ProjectFileTest {
         val pack = Files.createFile(dir.resolve("packs/Faithful.zip")).toAbsolutePath()
         val jar = dir.resolve("1.20.1.jar").toAbsolutePath() // need not exist: it is only a reference
         val blocks = mapOf("extrabiomesxl:id_2204[meta=3]" to "extrabiomesxl:leavesfirfancy")
-        val textures = mapOf<WorldSource, WorldTextures>(hills to WorldTextures(listOf(pack), coreJar = jar, blocks = blocks), valley to WorldTextures())
+        val modArchives = mapOf("Decocraft" to pack)
+        val textures = mapOf<WorldSource, WorldTextures>(hills to WorldTextures(listOf(pack), coreJar = jar, blocks = blocks, modArchives = modArchives), valley to WorldTextures())
         ProjectFile.write(file, ProjectSnapshot(listOf(LayerStack.of(valley), LayerStack.of(hills)), valley, emptySet(), emptyMap(), textures), "test")
 
-        assertEquals(listOf(WorldTextures(), WorldTextures(listOf(pack), jar, blocks = blocks)), ProjectFile.read(file).textures)
+        assertEquals(listOf(WorldTextures(), WorldTextures(listOf(pack), jar, blocks = blocks, modArchives = modArchives)), ProjectFile.read(file).textures)
         assertTrue("path=\"packs/Faithful.zip\"" in file.readText(), "stored relative to the project too")
     }
 

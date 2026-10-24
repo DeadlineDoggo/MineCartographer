@@ -64,7 +64,12 @@ object ModLocator {
     }
 
     /** [archives] with assets, in priority order; [missing] mods no archive provides. */
-    class Found(val archives: List<Path>, val missing: List<ModInfo>)
+    class Found(
+        val archives: List<Path>,
+        val missing: List<ModInfo>,
+        /** Lowercase mod id -> the archive (or unpacked folder) providing it, textures or not. */
+        val providers: Map<String, Path> = emptyMap(),
+    )
 
     private val archiveCache = ConcurrentHashMap<String, Archive>()
     @Volatile private var archivesLoaded = false
@@ -102,6 +107,16 @@ object ModLocator {
         }
     }
 
+    /** Forgets every archive's metadata, in memory and on disk, so archives are read again (Rescan). */
+    fun forgetArchives() {
+        synchronized(this) {
+            archiveCache.clear()
+            archivesLoaded = true
+            archivesDirty = false
+            runCatching { Files.deleteIfExists(archivesFile()) }
+        }
+    }
+
     /** Writes newly read archive metadata (call after [locate], off the UI thread). */
     fun saveArchives() {
         if (!archivesDirty) return
@@ -136,7 +151,7 @@ object ModLocator {
     private const val ARCHIVES_FORMAT = 1
 
     /** Mod archives for [world] (empty when it was played without mods); [known] are the ones found before. */
-    fun locate(world: AnvilWorld, known: List<Path> = emptyList(), extraFolders: List<Path> = folders): Found {
+    fun locate(world: AnvilWorld, known: List<Path> = emptyList(), extraFolders: List<Path> = folders, manual: Map<String, Path> = emptyMap()): Found {
         val forge = world.info.forge
         val mods = forge?.playedMods.orEmpty()
         if (forge == null || mods.isEmpty()) return Found(emptyList(), emptyList())
@@ -150,19 +165,30 @@ object ModLocator {
             (own + extraFolders).distinct().flatMap(::archivesIn)).distinctBy { it.path.toAbsolutePath().normalize() }
 
         val provided = HashSet<String>()
+        val providers = HashMap<String, Path>()
         val chosen = ArrayList<Archive>()
+        // Archives the user picked for a mod come first and count for that mod whatever their metadata says.
+        for ((mod, path) in manual) {
+            val a = (if (path.isDirectory()) Archive(path, emptySet(), emptySet(), null, null) else archive(path)) ?: continue
+            provided += mod.lowercase()
+            provided += a.modIds.map { it.lowercase() }
+            providers[mod.lowercase()] = a.path
+            if (a.hasAssets && chosen.none { it.path == a.path }) chosen += a
+        }
         for (a in candidates) {
             if (!a.fits(version, namedWorld = !forge.numericIds)) continue
             val ids = a.modIds.mapTo(HashSet()) { it.lowercase() }
             val fromOwnFolder = own.any { a.path.startsWith(it) } || a.path in known
             // Without metadata, its asset namespaces have to look like the world's mod ids
             // (`projectzulublock` for ProjectZulu|Core); an instance's own mods folder is trusted as it is.
-            val matches = ids.any { it in wanted } ||
-                (ids.isEmpty() && (fromOwnFolder || a.namespaces.any { ns -> ns in wanted || wantedStems.any { norm(ns).startsWith(it) } }))
+            // A namespace named like a world mod counts too: DecoCraft's mcmod.info says "Decocraft", the world "props".
+            val matches = ids.any { it in wanted } || a.namespaces.any { it in wanted } ||
+                (ids.isEmpty() && (fromOwnFolder || a.namespaces.any { ns -> wantedStems.any { norm(ns).startsWith(it) } }))
             if (!matches) continue
             // The same mod twice (several versions in one folder): the first one wins.
-            if (ids.isNotEmpty() && ids.all { it in provided }) continue
+            if (ids.isNotEmpty() && ids.all { it in provided } && a.namespaces.none { it in wanted && it !in provided }) continue
             provided += ids
+            a.namespaces.filterTo(provided) { it in wanted }
             a.bundled.mapTo(provided) { it.lowercase() }
             if (ids.isEmpty()) {
                 provided += a.namespaces
@@ -171,8 +197,9 @@ object ModLocator {
                     .mapTo(provided) { it.id.lowercase() }
             }
             if (a.hasAssets) chosen += a
+            for (m in mods) if (m.id.lowercase() in provided) providers.putIfAbsent(m.id.lowercase(), a.path)
         }
-        return Found(chosen.map { it.path }, mods.filter { it.id.lowercase() !in provided })
+        return Found(chosen.map { it.path }, mods.filter { it.id.lowercase() !in provided }, providers)
     }
 
     /**
@@ -181,7 +208,8 @@ object ModLocator {
      * than the save. [progress] gets (mods folders found, folders read); [cancelled] stops early.
      */
     fun search(world: AnvilWorld, root: Path, known: List<Path> = emptyList(), progress: (Int, Int) -> Unit = { _, _ -> }, cancelled: () -> Boolean = { false }): List<Path> {
-        val found = modsFolders(root, progress, cancelled)
+        // The picked folder itself (a mods folder of any name), then every `mods` folder below it.
+        val found = (listOf(root) + modsFolders(root, progress, cancelled)).distinct()
         // Greedy: each round takes the folder that leaves the fewest mods missing, until no folder helps.
         val chosen = ArrayList<Path>()
         var missing = locate(world, known, folders).missing.size
@@ -235,7 +263,16 @@ object ModLocator {
     internal fun archivesIn(folder: Path): List<Archive> = runCatching {
         val top = folder.listDirectoryEntries()
         val files = top.filter { it.isRegularFile() } + top.filter { it.isDirectory() }.flatMap { d -> runCatching { d.listDirectoryEntries().filter { it.isRegularFile() } }.getOrDefault(emptyList()) }
-        files.filter { it.name.endsWith(".jar", true) || it.name.endsWith(".zip", true) }.sortedBy { it.name.lowercase() }.mapNotNull(::archive)
+        val archives = files.filter { it.name.endsWith(".jar", true) || it.name.endsWith(".zip", true) }.sortedBy { it.name.lowercase() }.mapNotNull(::archive)
+        // Unpacked mods (a folder with mcmod.info): their ids count as present; their files aren't read as textures yet.
+        val unpacked = top.filter { it.isDirectory() && it.resolve("mcmod.info").isRegularFile() }.mapNotNull { dir ->
+            runCatching {
+                val text = Files.readString(dir.resolve("mcmod.info"))
+                Archive(dir, Regex(""""modid"\s*:\s*"([^"]+)"""").findAll(text).mapTo(LinkedHashSet()) { it.groupValues[1] }, emptySet(), false,
+                    Regex(""""mcversion"\s*:\s*"([^"]*)"""").find(text)?.groupValues?.get(1)?.takeIf { it.isNotBlank() })
+            }.getOrNull()
+        }
+        archives + unpacked
     }.getOrDefault(emptyList())
 
     /** Reads an archive's metadata once per path, size and modification time. */

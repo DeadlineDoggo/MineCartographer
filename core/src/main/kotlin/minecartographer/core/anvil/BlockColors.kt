@@ -30,8 +30,13 @@ object BlockColors {
     private val cache = ConcurrentHashMap<String, BlockLook>()
     private val learned = ConcurrentHashMap<String, BlockLook>()
     private val wanted: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val seen: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** Every modded name and `name[meta=n]` key looked up so far, colored or not (for listing a world's blocks). */
+    fun seenKeys(): Set<String> = seen
 
     fun look(name: String): BlockLook = learned[name] ?: cache.getOrPut(name) {
+        if (isModded(name)) seen += name
         if (isModded(name)) wanted += name
         classify(name.substringAfter(':'))
     }
@@ -45,6 +50,13 @@ object BlockColors {
 
     /** The look learned for a name or `name[meta=n]` key, if any. */
     fun learnedLook(key: String): BlockLook? = learned[key]
+
+    /** Drops every learned look, so modded blocks are guessed and learned again (Rescan). */
+    fun unlearnAll() {
+        for (key in learned.keys) cache.remove(key)
+        learned.clear()
+        cache.keys.removeIf { isModded(it.substringBefore('[')) }
+    }
 
     /** Drops what was learned for [key], so it is guessed (and wanted) again. */
     fun unlearn(key: String) {
@@ -68,6 +80,7 @@ object BlockColors {
         val meta = state.properties["meta"]
         if (meta != null && isModded(state.name)) {
             val key = keyOf(state.name, meta)
+            seen += key
             learned[key]?.let { return it }
             wanted += key
         }

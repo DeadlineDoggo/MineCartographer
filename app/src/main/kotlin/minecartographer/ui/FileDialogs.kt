@@ -123,6 +123,33 @@ object FileDialogs {
         }
     }
 
+    /** Lets the user pick the archive (jar or zip) of one mod. */
+    fun chooseModArchive(modId: String, start: Path?): Path? {
+        platformLook
+        val chooser = JFileChooser(start?.toFile()).apply {
+            dialogTitle = "Archive of the mod \"$modId\" (.jar or .zip)"
+            fileSelectionMode = JFileChooser.FILES_ONLY
+            isAcceptAllFileFilterUsed = false
+            fileFilter = object : FileFilter() {
+                override fun accept(f: File) = f.isDirectory || f.name.endsWith(".jar", true) || f.name.endsWith(".zip", true)
+                override fun getDescription() = "Mod archives (.jar, .zip)"
+            }
+            approveButtonText = "Use for $modId"
+        }
+        return if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) chooser.selectedFile.toPath() else null
+    }
+
+    /** Opens the system file manager with [path] selected (Windows), or its folder. */
+    fun showInFolder(path: Path) {
+        runCatching {
+            if (System.getProperty("os.name").startsWith("Windows")) {
+                ProcessBuilder("explorer.exe", "/select,${path.toAbsolutePath()}").start()
+            } else {
+                java.awt.Desktop.getDesktop().open((if (path.isDirectory()) path else path.parent).toFile())
+            }
+        }
+    }
+
     /** Lets the user pick a folder to create something in. */
     fun chooseFolder(title: String, start: Path?): Path? {
         platformLook

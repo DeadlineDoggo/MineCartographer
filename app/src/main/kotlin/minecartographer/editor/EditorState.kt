@@ -353,7 +353,14 @@ class EditorState {
      * Files a world is drawn with: everything read, in priority order, the client jar among them, and for a
      * world played with mods the [mods] archives found and the mods no archive was found for.
      */
-    class LoadedTextures(val files: List<Path>, val coreJar: Path?, val mods: List<Path> = emptyList(), val missingMods: List<ModInfo> = emptyList()) {
+    class LoadedTextures(
+        val files: List<Path>,
+        val coreJar: Path?,
+        val mods: List<Path> = emptyList(),
+        val missingMods: List<ModInfo> = emptyList(),
+        /** Lowercase mod id -> archive providing it (see [ModLocator.Found.providers]). */
+        val providers: Map<String, Path> = emptyMap(),
+    ) {
         val label: String get() {
             val others = files.filter { it !in mods }.map { it.fileName.toString() }
             return (others.dropLast(1) + listOfNotNull(if (mods.isEmpty()) null else "${mods.size} mods") + others.takeLast(1)).joinToString(" + ")
@@ -391,9 +398,9 @@ class EditorState {
 
     /**
      * Searches [root] (a drive or a backup folder) for the mods of [world] in the background and adds the `mods`
-     * folders that provide the most of them; remembered like [addModFolder].
+     * folders that provide the most of them (the picked folder itself included); remembered across sessions.
      */
-    fun searchMods(world: AnvilWorld, root: Path) {
+    fun findMods(world: AnvilWorld, root: Path) {
         if (busy) return notify("Wait for the current task to finish", warning = true)
         busy = true
         val title = "Searching for mods of ${world.name}"
@@ -430,19 +437,51 @@ class EditorState {
         }
     }
 
-    /** Stops searching the folders added before for mods. */
-    fun forgetModFolders() {
-        ModLocator.folders = emptyList()
+    /**
+     * Starts textures and mods from scratch: deletes the pack caches and the archive metadata, forgets learned colors,
+     * finds every world's mods again and redraws. For when files changed in a way their size and date don't show,
+     * or the results look stale.
+     */
+    fun rescanTextures() {
+        scope.launch(Dispatchers.IO) {
+            textureLock.withLock {
+                for ((assets, models) in textureSets.values) {
+                    models.cache?.let(PackCache::delete)
+                    assets.close()
+                }
+                textureSets.clear()
+                ModLocator.forgetArchives()
+            }
+            withContext(Dispatchers.Main) {
+                BlockColors.unlearnAll()
+                FlatModels.forgetAll()
+                unresolvedColors.clear()
+                retryColors.clear()
+                missingNotified.clear()
+                loadedTextures.clear()
+                tiles.textures = emptyMap()
+                refreshTextures(force = true)
+                tiles.reloadWorlds(worlds.mapTo(HashSet()) { it.id })
+                notify("Rescanning mods and textures")
+            }
+        }
+    }
+
+    /** Uses [archive] for the mod [modId] of [world] (whatever its metadata says), or the found one again when null. */
+    fun chooseModArchive(world: WorldSource, modId: String, archive: Path?) {
+        val current = worldTextures[world.id] ?: WorldTextures()
+        val archives = if (archive == null) current.modArchives - modId else current.modArchives + (modId to archive.toAbsolutePath().normalize())
+        worldTextures[world.id] = current.copy(modArchives = archives)
+        changed()
         refreshTextures(force = true)
     }
 
-    /** Searches [folder] for mods of every world from now on (it is remembered across sessions). */
-    fun addModFolder(folder: Path) {
-        // listOf: a Path is an Iterable of its parts, so `list + path` would add "H:", "Games", ... instead.
-        ModLocator.folders = ModLocator.folders + listOf(folder.toAbsolutePath().normalize())
-        missingNotified.clear()
+    /** Stops looking for mods in [folder] (one added by [findMods]). */
+    fun removeModFolder(folder: Path) {
+        ModLocator.folders = ModLocator.folders.filter { it != folder }
         refreshTextures(force = true)
     }
+
 
     /** True for worlds played with mods: their assets are loaded in every render mode, for the map colors. */
     fun hasMods(world: WorldSource) = (world as? AnvilWorld)?.info?.forge?.playedMods?.isNotEmpty() == true
@@ -467,13 +506,13 @@ class EditorState {
                 if (request != textureRequest) return@withLock
                 val loaded = HashMap<String, LoadedTextures>()
                 for (w in wanted) {
-                    val found = (w.world as? AnvilWorld)?.takeIf(::hasMods)?.let { ModLocator.locate(it, w.picked.mods) }
+                    val found = (w.world as? AnvilWorld)?.takeIf(::hasMods)?.let { ModLocator.locate(it, w.picked.mods, manual = w.picked.modArchives) }
                     val base = TextureFiles.sources(w.picked.files, w.picked.coreJar, w.version).orEmpty()
                     val jar = TextureFiles.coreJarOf(base)
                     val mods = found?.archives.orEmpty()
                     // Resource packs over mods over the vanilla jar, as in the game.
                     val files = (base.filter { it != jar } + mods + listOfNotNull(jar)).distinct()
-                    if (files.isNotEmpty() || found != null) loaded[w.world.id] = LoadedTextures(files, jar, mods, found?.missing.orEmpty())
+                    if (files.isNotEmpty() || found != null) loaded[w.world.id] = LoadedTextures(files, jar, mods, found?.missing.orEmpty(), found?.providers.orEmpty())
                 }
                 val models = HashMap<String, BlockModels>()
                 for ((id, l) in loaded) {
@@ -514,7 +553,7 @@ class EditorState {
                             val (w, mods) = missing
                             missingNotified += w.id
                             notify("${mods.size} mods of \"${w.name}\" not found (${mods.take(4).joinToString { it.id }}${if (mods.size > 4) ", …" else ""}). " +
-                                "View tab, Mods: Search for mods… or Add mod folder…", warning = true)
+                                "Find them in the View tab: Mods, Find mods…", warning = true)
                         }
                     }
                     true
@@ -544,11 +583,9 @@ class EditorState {
         return (mods.mapNotNull { it.parent?.resolve("config") } + listOfNotNull(instance?.resolve("config"), world.folder.parent?.resolve("config"))).distinct()
     }
 
-    /** Modded block keys (`ns:name[meta=n]`) colors were looked up for, for the block textures dialog. */
-    val seenModdedKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-    /** Shown by the block textures dialog. */
-    var blockTexturesDialogVisible by mutableStateOf(false)
+    /** The Mods & textures panel over the map, and its width. */
+    var modsPanelVisible by mutableStateOf(false)
+    var modsPanelWidth by mutableStateOf(640.dp)
 
     /** The pack [world] is drawn with, once its textures are loaded. */
     fun modelsOf(world: WorldSource): BlockModels? = tiles.textures[world.id] as? BlockModels
@@ -559,9 +596,10 @@ class EditorState {
         val names = forge.blockNames.values.toSet()
         val mods = forge.playedMods.mapTo(HashSet()) { it.id.lowercase() }
         val packNamespaces = modelsOf(world)?.assets?.namespaces.orEmpty()
-        return seenModdedKeys.filter { key ->
+        // Before 1.13 every block carries its data value: the bare name is the same block again.
+        return BlockColors.seenKeys().filter { key ->
             val name = BlockColors.stateOf(key).name
-            if (forge.numericIds) name in names else name.substringBefore(':').let { it in mods || it in packNamespaces }
+            if (forge.numericIds) name in names && "[meta=" in key else name.substringBefore(':').let { it in mods || it in packNamespaces }
         }.sorted()
     }
 
@@ -642,7 +680,6 @@ class EditorState {
                 if (names.isEmpty()) continue
                 val packs = textureLock.withLock { textureSets.values.map { it.second } }
                 val learned = HashSet<String>()
-                seenModdedKeys += names
                 for (name in names) {
                     val ns = name.substringBefore(':')
                     // 1.6 blocks are named after the mod id (tconstruct:...), their textures live elsewhere (tinker:...).

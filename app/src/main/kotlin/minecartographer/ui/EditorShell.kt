@@ -72,7 +72,6 @@ fun EditorShell(state: EditorState, onExit: () -> Unit) {
         LoadingLayer(state, visible = state.startingUp, fullWindow = true)
     }
     ExportDialog(state)
-    BlockTexturesDialog(state)
 }
 
 @Composable
@@ -92,6 +91,7 @@ private fun EditorLayout(state: EditorState, onExit: () -> Unit) {
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 ChunkViewport(state, Modifier.fillMaxSize())
                 ViewportOverlay(state)
+                ModsDrawer(state)
             }
             if (state.rightDockVisible) {
                 Splitter { state.rightDockWidth = (state.rightDockWidth - it).coerceIn(MIN_DOCK_WIDTH, MAX_DOCK_WIDTH) }
@@ -193,6 +193,8 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             *RenderMode.entries.mapIndexed { i, mode ->
                 MenuItem("${mode.label} mode", "${i + 1}", checked = s.mode == mode) { state.setRenderMode(mode) }
             }.toTypedArray(),
+            MenuSeparator,
+            MenuItem("Mods & textures…", enabled = (state.activeWorld as? minecartographer.core.anvil.AnvilWorld)?.info?.forge != null) { state.modsPanelVisible = true },
             MenuSeparator,
             MenuItem("Chunk borders", checked = s.chunkBorders) { state.updateRenderSettings(s.copy(chunkBorders = !s.chunkBorders)) },
             MenuItem("Layer colors", checked = state.showLayerColors) { state.showLayerColors = !state.showLayerColors },
