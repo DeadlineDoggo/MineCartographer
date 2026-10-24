@@ -1110,6 +1110,15 @@ class EditorState {
         }
     }
 
+    /** Sets the height of the chunks to [dy] blocks above where they were copied from. */
+    fun setChunkHeight(dy: Int) {
+        val (layer, targets) = checkedTargets(layered = dy != 0 || targets().any { it.layered }) ?: return
+        val limit = activeStack!!.world.let { it.maxY - it.minY }
+        commit("Set height") { it.reshape(layer.id, targets.keys) { pos, ref -> pos to ref.copy(dy = dy.coerceIn(-limit, limit)) } }
+    }
+
+    private fun targets() = transformTargets().values
+
     /** Keeps the original world below height [y] under the chunks; null takes the chunks down to their bottom again. */
     fun cutChunks(y: Int?) {
         val (layer, targets) = checkedTargets(layered = y != null) ?: return
