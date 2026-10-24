@@ -10,6 +10,7 @@ import androidx.compose.ui.window.rememberWindowState
 import minecartographer.core.DemoWorld
 import minecartographer.core.project.ProjectFile
 import minecartographer.editor.EditorState
+import minecartographer.textures.PackCache
 import minecartographer.editor.confirmCloseProject
 import minecartographer.editor.handleKey
 import minecartographer.ui.AppIconPainter
@@ -24,6 +25,8 @@ import java.nio.file.Path
 /** Command-line arguments are world folders or a project file to open after startup. */
 fun main(args: Array<String>) = application {
     val state = remember {
+        // Pack caches not used for two months go; it only costs a little time once.
+        kotlin.concurrent.thread(isDaemon = true, name = "prune-caches") { PackCache.prune() }
         EditorState().apply {
             beginLoading("Loading worlds")
             addWorld(DemoWorld("Demo Valley", seed = 1))

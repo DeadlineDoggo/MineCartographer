@@ -6,6 +6,13 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
 import java.util.prefs.Preferences
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.nio.file.StandardCopyOption
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import kotlin.io.path.exists
@@ -60,6 +67,73 @@ object ModLocator {
     class Found(val archives: List<Path>, val missing: List<ModInfo>)
 
     private val archiveCache = ConcurrentHashMap<String, Archive>()
+    @Volatile private var archivesLoaded = false
+    @Volatile private var archivesDirty = false
+
+    /**
+     * Archive metadata is kept in `archives.bin` under [PackCache.defaultRoot], keyed like the memory cache by path,
+     * size and modification time, so a session start doesn't open every mod archive again.
+     */
+    private fun archivesFile(): Path = PackCache.defaultRoot.resolve("archives.bin")
+
+    private fun loadArchives() {
+        if (archivesLoaded) return
+        synchronized(this) {
+            if (archivesLoaded) return
+            archivesLoaded = true
+            val file = archivesFile()
+            if (!file.exists()) return
+            runCatching {
+                DataInputStream(BufferedInputStream(GZIPInputStream(Files.newInputStream(file)))).use { input ->
+                    if (input.readInt() != ARCHIVES_FORMAT) return
+                    repeat(input.readInt()) {
+                        val key = input.readUTF()
+                        val path = Path.of(input.readUTF())
+                        fun strings() = List(input.readInt()) { input.readUTF() }.toSet()
+                        val ids = strings()
+                        val namespaces = strings()
+                        val modern = when (input.readByte().toInt()) { 0 -> false; 1 -> true; else -> null }
+                        val minecraft = input.readUTF().ifEmpty { null }
+                        val bundled = strings()
+                        archiveCache.putIfAbsent(key, Archive(path, ids, namespaces, modern, minecraft, bundled))
+                    }
+                }
+            }
+        }
+    }
+
+    /** Writes newly read archive metadata (call after [locate], off the UI thread). */
+    fun saveArchives() {
+        if (!archivesDirty) return
+        synchronized(this) {
+            archivesDirty = false
+            runCatching {
+                val file = archivesFile()
+                Files.createDirectories(file.parent)
+                val tmp = Files.createTempFile(file.parent, "archives", ".tmp")
+                try {
+                    DataOutputStream(BufferedOutputStream(GZIPOutputStream(Files.newOutputStream(tmp)))).use { out ->
+                        out.writeInt(ARCHIVES_FORMAT)
+                        val entries = archiveCache.entries.filter { Files.exists(it.value.path) }
+                        out.writeInt(entries.size)
+                        for ((key, a) in entries) {
+                            out.writeUTF(key); out.writeUTF(a.path.toString())
+                            fun strings(set: Set<String>) { out.writeInt(set.size); set.forEach(out::writeUTF) }
+                            strings(a.modIds); strings(a.namespaces)
+                            out.writeByte(when (a.modern) { false -> 0; true -> 1; null -> 2 })
+                            out.writeUTF(a.minecraft.orEmpty())
+                            strings(a.bundled)
+                        }
+                    }
+                    Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+                } finally {
+                    Files.deleteIfExists(tmp)
+                }
+            }.onFailure { archivesDirty = true }
+        }
+    }
+
+    private const val ARCHIVES_FORMAT = 1
 
     /** Mod archives for [world] (empty when it was played without mods); [known] are the ones found before. */
     fun locate(world: AnvilWorld, known: List<Path> = emptyList(), extraFolders: List<Path> = folders): Found {
@@ -110,8 +184,11 @@ object ModLocator {
     fun archive(path: Path): Archive? {
         val key = runCatching { "${path.toAbsolutePath().normalize()}|${Files.size(path)}|${Files.getLastModifiedTime(path).toMillis()}" }.getOrNull() ?: return null
         archiveCache[key]?.let { return it }
+        loadArchives()
+        archiveCache[key]?.let { return it }
         val archive = runCatching { ZipFile(path.toFile()).use { read(path, it) } }.getOrNull() ?: return null
         archiveCache[key] = archive
+        archivesDirty = true
         return archive
     }
 

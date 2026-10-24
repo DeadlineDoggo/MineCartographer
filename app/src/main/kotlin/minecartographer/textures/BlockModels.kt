@@ -38,6 +38,9 @@ object Dir {
 class Texture(val size: Int, private val levels: List<IntArray>, val opaque: Boolean) {
     val levelCount get() = levels.size
 
+    /** The mip levels, largest first, for [PackCache]. */
+    internal val levelData: List<IntArray> get() = levels
+
     /** Average color as opaque RGB (the 1x1 mip level, alpha undone); null when the texture is mostly transparent. */
     val averageRgb: Int?
         get() {
@@ -199,15 +202,25 @@ object FlatModels : BlockModelSource {
 /**
  * Zip files with Minecraft assets (resource packs first, then mod archives, then a client jar) as one tree:
  * every `assets/` entry is indexed once, the first file having it wins, so a read is one lookup however
- * many archives there are (a modpack has dozens).
+ * many archives there are (a modpack has dozens). With the index from a [PackCache] no archive is opened
+ * until something is read from it.
  */
-class AssetSource(val files: List<Path>) : Closeable {
-    private val zips = files.map { ZipFile(it.toFile()) }
-    private val index = HashMap<String, Pair<ZipFile, ZipEntry>>()
+class AssetSource(val files: List<Path>, cachedIndex: Map<String, Int>? = null) : Closeable {
+    private val zips = arrayOfNulls<ZipFile>(files.size)
+    @Volatile private var closed = false
 
-    init {
-        for (zip in zips) for (entry in zip.entries()) {
-            if (!entry.isDirectory && entry.name.startsWith("assets/")) index.putIfAbsent(entry.name, zip to entry)
+    /** Asset path -> index into [files]. */
+    val index: Map<String, Int> = cachedIndex ?: HashMap<String, Int>().also { index ->
+        for (i in files.indices) for (entry in zip(i).entries()) {
+            if (!entry.isDirectory && entry.name.startsWith("assets/")) index.putIfAbsent(entry.name, i)
+        }
+    }
+
+    private fun zip(i: Int): ZipFile {
+        zips[i]?.let { return it }
+        synchronized(zips) {
+            check(!closed) { "asset source closed" }
+            return zips[i] ?: ZipFile(files[i].toFile()).also { zips[i] = it }
         }
     }
 
@@ -220,7 +233,8 @@ class AssetSource(val files: List<Path>) : Closeable {
     val label: String get() = files.joinToString(" + ") { it.name }
 
     fun read(path: String): ByteArray? {
-        val (zip, entry) = index[path] ?: return null
+        val zip = zip(index[path] ?: return null)
+        val entry = zip.getEntry(path) ?: return null
         return zip.getInputStream(entry).use { it.readAllBytes() }
     }
 
@@ -228,11 +242,14 @@ class AssetSource(val files: List<Path>) : Closeable {
 
     /** Enum constants in the classes of the archive that provides [path] (read once per archive, when first asked). */
     fun enumConstants(path: String): Map<String, List<EnumConstants.Constant>> {
-        val zip = index[path]?.first ?: return emptyMap()
+        val zip = zip(index[path] ?: return emptyMap())
         return enums.computeIfAbsent(zip) { EnumConstants.index(it) }
     }
 
-    override fun close() = zips.forEach { runCatching { it.close() } }
+    override fun close() = synchronized(zips) {
+        closed = true
+        zips.forEach { runCatching { it?.close() } }
+    }
 }
 
 /**
@@ -240,7 +257,7 @@ class AssetSource(val files: List<Path>) : Closeable {
  * models inherit from parents, and their elements become [Quad]s. Blocks drawn by the game's entity
  * renderer (chests, beds, signs...) and blocks without assets (mods) fall back to [FlatModels].
  */
-class BlockModels(val assets: AssetSource) : BlockModelSource {
+class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : BlockModelSource {
     private val unrotated = ConcurrentHashMap<BlockState, BlockModel>()
     private val rotated = Array(4) { ConcurrentHashMap<BlockState, BlockModel>() }
     private val models = ConcurrentHashMap<String, Optional<ResolvedModel>>()
@@ -319,8 +336,11 @@ class BlockModels(val assets: AssetSource) : BlockModelSource {
             .map { "assets/$ns/blockstates/$it.json" }.firstOrNull { assets.has(it) }
 
     fun texture(id: String): Texture? = textures.getOrPut(id) {
+        cache?.texture(id)?.let { return@getOrPut Optional(it) }
         val (ns, path) = split(id)
-        Optional(assets.read("assets/$ns/textures/$path.png")?.let { runCatching { Texture.decode(it) }.getOrNull() })
+        val decoded = assets.read("assets/$ns/textures/$path.png")?.let { runCatching { Texture.decode(it) }.getOrNull() }
+        decoded?.let { cache?.putTexture(id, it) }
+        Optional(decoded)
     }.value
 
     private fun build(state: BlockState): BlockModel? {
@@ -432,7 +452,19 @@ class BlockModels(val assets: AssetSource) : BlockModelSource {
      */
     private fun expandMeta(state: BlockState, json: Map<*, *>): BlockState {
         if (state.name.startsWith("minecraft:")) return state
-        val meta = state.properties["meta"]?.toIntOrNull() ?: return state
+        val metaText = state.properties["meta"] ?: return state
+        val key = BlockColors.keyOf(state.name, metaText)
+        cache?.variants?.get(key)?.let { cached ->
+            if (cached.isEmpty()) return state
+            val (k, v) = cached.split('=', limit = 2)
+            return BlockState.of(state.name, mapOf(k to v))
+        }
+        val expanded = expandMetaUncached(state, json, metaText.toIntOrNull() ?: 0)
+        cache?.putVariant(key, expanded.properties.entries.firstOrNull { it.key != "meta" }?.let { "${it.key}=${it.value}" } ?: "")
+        return expanded
+    }
+
+    private fun expandMetaUncached(state: BlockState, json: Map<*, *>, meta: Int): BlockState {
         val values = LinkedHashMap<String, LinkedHashSet<String>>()
         val variants = json["variants"] as? Map<*, *> ?: return state
         for ((k, v) in variants) {

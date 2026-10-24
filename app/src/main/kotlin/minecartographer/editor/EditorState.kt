@@ -43,6 +43,7 @@ import minecartographer.textures.AssetSource
 import minecartographer.textures.BlockModels
 import minecartographer.textures.TextureFiles
 import minecartographer.textures.ModLocator
+import minecartographer.textures.PackCache
 import minecartographer.textures.FlatModels
 import minecartographer.core.anvil.ModInfo
 import minecartographer.core.anvil.BlockColors
@@ -428,8 +429,13 @@ class EditorState {
                 val models = HashMap<String, BlockModels>()
                 for ((id, l) in loaded) {
                     if (l.files.isEmpty()) continue
-                    val set = textureSets[l.files] ?: runCatching { AssetSource(l.files).let { it to BlockModels(it) } }
-                        .onFailure { it.printStackTrace() }.getOrNull()?.also { textureSets[l.files] = it }
+                    val set = textureSets[l.files] ?: runCatching {
+                        // The pack cache knows which archive has which asset, so archives open only when read from.
+                        val cache = PackCache.of(l.files)
+                        val assets = AssetSource(l.files, cache.index)
+                        if (cache.index == null) cache.putIndex(assets.index)
+                        assets to BlockModels(assets, cache)
+                    }.onFailure { it.printStackTrace() }.getOrNull()?.also { textureSets[l.files] = it }
                     set?.let { models[id] = it.second }
                 }
                 val applied = withContext(Dispatchers.Main) {
@@ -456,10 +462,17 @@ class EditorState {
                 }
                 if (applied) {
                     val used = loaded.values.map { it.files }.toSet()
-                    textureSets.keys.filter { it !in used }.forEach { textureSets.remove(it)?.first?.close() }
+                    textureSets.keys.filter { it !in used }.forEach { files ->
+                        textureSets.remove(files)?.let { (assets, m) -> m.cache?.save(); assets.close() }
+                    }
+                    ModLocator.saveArchives()
                     retryColors += unresolvedColors
                     unresolvedColors.clear()
-                    if (models.isNotEmpty()) startColorLearner()
+                    restoreCachedLooks(models.values.toSet())
+                    if (models.isNotEmpty()) {
+                        startColorLearner()
+                        startCacheSaver()
+                    }
                 }
             }
         }
@@ -477,6 +490,40 @@ class EditorState {
      * milliseconds it takes the modded names the chunk reader met, looks them up in the loaded packs and,
      * once some were found, reloads the chunks of the worlds played with mods.
      */
+    /**
+     * Colors learned in earlier sessions, from the pack caches: applied at once, so a modded world shows its
+     * real colors right after its textures load instead of after the learner went through every block again.
+     */
+    private suspend fun restoreCachedLooks(models: Set<BlockModels>) {
+        val restored = HashSet<String>()
+        for (m in models) m.cache?.looks?.forEach { (key, look) ->
+            if (look !== PackCache.NO_LOOK && BlockColors.learnedLook(key) == null) {
+                BlockColors.learn(key, look)
+                restored += key
+            }
+        }
+        if (restored.isEmpty()) return
+        val blocks = restored.mapTo(HashSet()) { BlockColors.stateOf(it).name }
+        FlatModels.forget(blocks)
+        models.forEach { it.forget(blocks) }
+        withContext(Dispatchers.Main) { tiles.reloadWorlds(worlds.filter(::hasMods).mapTo(HashSet()) { it.id }) }
+    }
+
+    private var cacheSaver: Job? = null
+
+    /** Writes pack caches (looks, variants, decoded textures) every few seconds while they change. */
+    private fun startCacheSaver() {
+        if (cacheSaver?.isActive == true) return
+        cacheSaver = scope.launch(Dispatchers.IO) {
+            while (true) {
+                delay(5000)
+                val caches = textureLock.withLock { textureSets.values.mapNotNull { it.second.cache } }
+                caches.forEach { it.save() }
+                ModLocator.saveArchives()
+            }
+        }
+    }
+
     private fun startColorLearner() {
         if (colorLearner?.isActive == true) return
         colorLearner = scope.launch(Dispatchers.Default) {
@@ -489,8 +536,15 @@ class EditorState {
                 val learned = HashSet<String>()
                 for (name in names) {
                     val ns = name.substringBefore(':')
-                    val look = packs.filter { ns in it.assets.namespaces }
-                        .firstNotNullOfOrNull { runCatching { it.mapLook(BlockColors.stateOf(name)) }.getOrNull() }
+                    val candidates = packs.filter { ns in it.assets.namespaces }
+                    val cached = candidates.firstNotNullOfOrNull { it.cache?.looks?.get(name) }
+                    val look = when {
+                        cached === PackCache.NO_LOOK -> null
+                        cached != null -> cached
+                        else -> candidates.firstNotNullOfOrNull { p ->
+                            runCatching { p.mapLook(BlockColors.stateOf(name)) }.getOrNull()?.also { p.cache?.putLook(name, it) }
+                        }.also { found -> if (found == null) candidates.forEach { it.cache?.putLook(name, null) } }
+                    }
                     if (look == null) unresolvedColors += name else {
                         BlockColors.learn(name, look)
                         learned += name
@@ -1029,7 +1083,11 @@ class EditorState {
 
     fun dispose() {
         scope.cancel()
-        textureSets.values.forEach { it.first.close() }
+        textureSets.values.forEach { (assets, models) ->
+            models.cache?.save()
+            assets.close()
+        }
+        ModLocator.saveArchives()
         worlds.forEach { (it as? AnvilWorld)?.close() }
     }
 
