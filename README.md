@@ -53,6 +53,11 @@ from. It's the slowest mode.
 
 ![Textured mode](docs/render-textured.png)
 
+**2D or 3D.** The button next to the mode switcher (or `V`) flips between the isometric 3D view
+and a classic map straight from above, north up. Every mode works in both: from above you see the
+top of each column, shaded a little by its height against its neighbours. Selecting, pasting and
+the other tools work the same.
+
 ## How merging different versions works
 
 Every chunk in a Minecraft save records the game version it was written with, and Minecraft
@@ -167,6 +172,7 @@ The file is plain XML, so you can read it or keep it in version control:
 | `,` / `.` | Rotate the view |
 | F | Fit the world on screen |
 | 1, 2, 3 | Map, Blocks, Textured render mode |
+| V | 2D view from above / 3D view |
 | H, B, R, M, E, I | Move view, brush select, rectangle select, move layer, eraser, pick layer |
 | Shift / Ctrl while selecting | Add to / subtract from the selection |
 | Ctrl+A, Ctrl+Shift+A, Ctrl+I | Select all, none, invert |
