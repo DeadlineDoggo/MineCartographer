@@ -66,7 +66,7 @@ fun StartScreen(state: EditorState) {
         contentAlignment = Alignment.Center,
     ) {
         Row(
-            Modifier.width(780.dp).height(470.dp).clip(shape).background(EditorTheme.panel)
+            Modifier.width(780.dp).height(496.dp).clip(shape).background(EditorTheme.panel)
                 .pointerInput(Unit) { detectTapGestures { } },
         ) {
             Column(Modifier.weight(1.35f).fillMaxHeight().padding(28.dp)) {
@@ -86,6 +86,8 @@ fun StartScreen(state: EditorState) {
                 }
                 StartAction(Icons.Eye, "Open the demo worlds", null) { state.openDemo() }
                 Recent(state)
+                Spacer(Modifier.weight(1f))
+                LicenseLine()
             }
             SupportSide(state, Modifier.weight(1f).fillMaxHeight())
         }
@@ -133,6 +135,18 @@ private fun RecentRow(name: String, detail: String, onClick: () -> Unit) {
         Txt(name, Modifier.width(150.dp), size = 12.sp)
         Txt(detail, Modifier.weight(1f), color = EditorTheme.textFaint, size = 11.sp)
     }
+}
+
+/** Who made it and under which license (the NOTICE file asks every copy to show this); opens the license. */
+@Composable
+private fun LicenseLine() {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    Txt(
+        "© 2026 ${AppInfo.AUTHOR} · Free software under the GNU GPL v3",
+        Modifier.padding(horizontal = 8.dp).hoverable(interaction).clickable(interaction, indication = null) { browse(AppInfo.LICENSE_URL) },
+        color = if (hovered) EditorTheme.text else EditorTheme.textFaint, size = 11.sp,
+    )
 }
 
 /** Footer of the right card: the GitHub mark, its name and the project's. */

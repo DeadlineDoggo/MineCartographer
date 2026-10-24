@@ -4,7 +4,9 @@ import java.util.Properties
 
 object AppInfo {
     const val NAME = "MineCartographer"
+    const val AUTHOR = "Emanuel Cisar"
     const val REPOSITORY_URL = "https://github.com/DeadlineDoggo/MineCartographer"
+    const val LICENSE_URL = "$REPOSITORY_URL/blob/main/LICENSE"
 
     /** Where "Buy me a coffee" goes. Left empty, the button only says the link is not set up. */
     const val SUPPORT_URL = "https://ko-fi.com/mrkuko"

@@ -45,6 +45,9 @@ compose.desktop {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "MineCartographer"
             packageVersion = appVersion.substringBefore('-')
+            vendor = "Emanuel Cisar"
+            copyright = "© 2026 Emanuel Cisar. GNU GPL v3."
+            licenseFile = rootProject.layout.projectDirectory.file("LICENSE")
             appResourcesRootDir = layout.projectDirectory.dir("resources")
             windows {
                 iconFile = layout.projectDirectory.file("icons/app.ico")
