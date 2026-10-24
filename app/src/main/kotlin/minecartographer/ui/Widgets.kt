@@ -181,10 +181,13 @@ fun Checkbox(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
-            Modifier.size(14.dp).clip(RoundedCornerShape(3.dp))
+            Modifier.size(16.dp).clip(RoundedCornerShape(3.dp))
                 .background(if (checked) EditorTheme.accent else Color.Transparent)
-                .border(1.dp, if (checked) EditorTheme.accent else EditorTheme.textFaint, RoundedCornerShape(3.dp))
-        )
+                .border(1.dp, if (checked) EditorTheme.accent else EditorTheme.textFaint, RoundedCornerShape(3.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (checked) Icon(Icons.Check, Modifier.size(12.dp), Color.White)
+        }
         Spacer(Modifier.width(8.dp))
         Txt(label)
     }
