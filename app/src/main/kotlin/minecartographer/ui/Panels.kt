@@ -34,6 +34,8 @@ import minecartographer.editor.BRUSH_SIZES
 import minecartographer.editor.EditorState
 import minecartographer.editor.SelectMode
 import minecartographer.editor.Tool
+import minecartographer.textures.TextureFiles
+import minecartographer.viewport.RenderMode
 
 private val panelPadding = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
 
@@ -239,7 +241,19 @@ fun SelectionPanel(state: EditorState) {
 fun ViewPanel(state: EditorState) {
     val settings = state.renderSettings
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).then(panelPadding)) {
-        SectionHeader("DISPLAY", Modifier.padding(top = 0.dp))
+        SectionHeader("RENDER MODE", Modifier.padding(top = 0.dp))
+        Segmented(RenderMode.entries, settings.mode, { it.label }) { state.setRenderMode(it) }
+        Txt(settings.mode.description, color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 6.dp))
+        if (settings.mode == RenderMode.Textured) {
+            KeyValue("Textures", state.textureLabel ?: "none found")
+            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                TextButton("Choose…") { FileDialogs.chooseTextureFiles()?.let(state::chooseTextures) }
+                if (TextureFiles.chosen.isNotEmpty()) TextButton("Find automatically") { state.chooseTextures(emptyList()) }
+            }
+            Txt("Read from your Minecraft installation: a client jar, plus resource packs if you add them.",
+                color = EditorTheme.textFaint, size = 11.sp, modifier = Modifier.padding(top = 6.dp))
+        }
+        SectionHeader("DISPLAY")
         Checkbox("Chunk borders", settings.chunkBorders) {
             state.updateRenderSettings(settings.copy(chunkBorders = it))
         }

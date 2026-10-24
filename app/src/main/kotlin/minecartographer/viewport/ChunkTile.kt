@@ -14,10 +14,18 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
+/** How chunks are drawn, from fastest to most detailed. */
+enum class RenderMode(val label: String, val description: String) {
+    Map("Map", "Top block of each column, sides filled down. Fastest."),
+    Blocks("Blocks", "Every block that can be seen, as colored cubes."),
+    Textured("Textured", "Minecraft's own block models and textures."),
+}
+
 data class RenderSettings(
     /** Vertical exaggeration: 1.0 draws blocks as cubes. */
     val heightScale: Float = 1f,
     val chunkBorders: Boolean = true,
+    val mode: RenderMode = RenderMode.Map,
 )
 
 /**

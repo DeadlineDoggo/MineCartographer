@@ -43,6 +43,26 @@ object FileDialogs {
         }
     }
 
+    /** Lets the user pick a Minecraft client jar and/or resource packs (zips) for textures. */
+    fun chooseTextureFiles(): List<Path>? {
+        platformLook
+        val appData = System.getenv("APPDATA")?.let { Path.of(it, ".minecraft") }
+        val start = listOfNotNull(appData?.resolve("resourcepacks"), appData?.resolve("versions")).firstOrNull { it.isDirectory() }
+        val chooser = JFileChooser(start?.toFile()).apply {
+            dialogTitle = "Choose textures: a Minecraft client jar and/or resource packs (top pack first)"
+            fileSelectionMode = JFileChooser.FILES_ONLY
+            isMultiSelectionEnabled = true
+            isAcceptAllFileFilterUsed = false
+            fileFilter = object : FileFilter() {
+                override fun accept(f: File) = f.isDirectory || f.name.endsWith(".jar") || f.name.endsWith(".zip")
+                override fun getDescription() = "Client jars and resource packs (.jar, .zip)"
+            }
+            approveButtonText = "Use textures"
+        }
+        if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return null
+        return chooser.selectedFiles.map { it.toPath() }.ifEmpty { null }
+    }
+
     /** Lets the user pick a folder to create something in. */
     fun chooseFolder(title: String, start: Path?): Path? {
         platformLook

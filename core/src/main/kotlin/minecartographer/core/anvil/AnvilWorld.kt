@@ -1,5 +1,6 @@
 package minecartographer.core.anvil
 
+import minecartographer.core.ChunkBlocks
 import minecartographer.core.ChunkBounds
 import minecartographer.core.ChunkPos
 import minecartographer.core.ChunkSurface
@@ -79,6 +80,11 @@ class AnvilWorld private constructor(
     override fun loadSurface(pos: ChunkPos): ChunkSurface? {
         val raw = readChunk(pos) ?: return null
         return SurfaceExtractor.extract(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos)
+    }
+
+    override fun loadBlocks(pos: ChunkPos): ChunkBlocks? {
+        val raw = readChunk(pos) ?: return null
+        return SurfaceExtractor.extractBlocks(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos)
     }
 
     fun readChunk(pos: ChunkPos): RawChunk? = if (!hasChunk(pos)) null else region(regions, regionDir, pos)?.read(pos)

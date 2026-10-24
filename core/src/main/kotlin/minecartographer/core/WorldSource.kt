@@ -32,4 +32,7 @@ interface WorldSource {
     fun hasChunk(pos: ChunkPos): Boolean
 
     fun loadSurface(pos: ChunkPos): ChunkSurface?
+
+    /** The chunk's visible blocks; worlds without block data build them from the surface. May hit the disk too. */
+    fun loadBlocks(pos: ChunkPos): ChunkBlocks? = loadSurface(pos)?.let(ChunkBlocks::fromSurface)
 }

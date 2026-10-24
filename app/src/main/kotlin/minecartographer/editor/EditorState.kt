@@ -31,6 +31,10 @@ import minecartographer.core.edit.LayerStack
 import minecartographer.core.edit.UndoHistory
 import minecartographer.viewport.ChunkTileCache
 import minecartographer.viewport.IsoView
+import minecartographer.textures.AssetSource
+import minecartographer.textures.BlockModels
+import minecartographer.textures.TextureFiles
+import minecartographer.viewport.RenderMode
 import minecartographer.viewport.RenderSettings
 
 /** Short message shown over the viewport; [id] makes repeated texts re-trigger the timer. */
@@ -306,6 +310,44 @@ class EditorState {
     fun updateRenderSettings(settings: RenderSettings) {
         renderSettings = settings
         tiles.settings = settings
+        if (settings.mode == RenderMode.Textured) loadTextures()
+    }
+
+    fun setRenderMode(mode: RenderMode) = updateRenderSettings(renderSettings.copy(mode = mode))
+
+    // ---- Textures ----
+
+    /** Where the Textured mode's textures come from (e.g. "1.20.1.jar"), null until loaded. */
+    var textureLabel by mutableStateOf<String?>(null)
+        private set
+    private var textureAssets: AssetSource? = null
+    private var texturesLoading = false
+
+    /** Opens the textures for the Textured mode once; without any, that mode looks like the Blocks mode. */
+    private fun loadTextures(force: Boolean = false) {
+        if (texturesLoading || (textureAssets != null && !force)) return
+        texturesLoading = true
+        scope.launch(Dispatchers.IO) {
+            val files = TextureFiles.sources()
+            val assets = files?.let { runCatching { AssetSource(it) }.onFailure { e -> e.printStackTrace() }.getOrNull() }
+            withContext(Dispatchers.Main) {
+                texturesLoading = false
+                val old = textureAssets
+                textureAssets = assets
+                textureLabel = assets?.label
+                tiles.textures = assets?.let(::BlockModels)
+                old?.close()
+                if (assets == null) {
+                    notify("No Minecraft installation found for textures. Choose a client jar or resource pack in the View panel.", warning = true)
+                }
+            }
+        }
+    }
+
+    /** Uses these files (resource packs and/or a client jar) for textures; empty goes back to finding a jar. */
+    fun chooseTextures(files: List<Path>) {
+        TextureFiles.chosen = files
+        loadTextures(force = true)
     }
 
     fun selectTool(t: Tool) {
@@ -652,6 +694,7 @@ class EditorState {
 
     fun dispose() {
         scope.cancel()
+        textureAssets?.close()
         worlds.forEach { (it as? AnvilWorld)?.close() }
     }
 

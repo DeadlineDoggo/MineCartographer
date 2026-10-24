@@ -3,6 +3,7 @@ package minecartographer.core.anvil
 import minecartographer.core.ChunkPos
 import org.junit.jupiter.api.DynamicTest
 import org.junit.jupiter.api.TestFactory
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 /** Reads chunk surfaces from one real world per game version (see [TestWorlds]). */
@@ -36,6 +37,43 @@ class RealWorldsTest {
                     assertTrue(surface.colors.any { it ushr 24 != 0 }, "All-transparent surface at $pos")
                 }
                 println("${info.versionName}: ${world.chunkCount} chunks, $read of $tried sampled chunks complete")
+            } finally {
+                world.close()
+            }
+        }
+    }
+
+    @TestFactory
+    fun `visible blocks agree with the surface`(): List<DynamicTest> = TestWorlds.require().map { info ->
+        DynamicTest.dynamicTest("${info.versionName} (${info.name})") {
+            val world = AnvilWorld.open(info.folder)
+            try {
+                val b = world.focusBounds!!
+                val cx = (b.minX + b.maxX) / 2
+                val cz = (b.minZ + b.maxZ) / 2
+                var checked = 0
+                var layers = 0L
+                for (x in cx - 4..cx + 4) for (z in cz - 4..cz + 4) {
+                    val pos = ChunkPos(x, z)
+                    val surface = world.loadSurface(pos) ?: continue
+                    val blocks = world.loadBlocks(pos)
+                    assertNotNull(blocks, "Chunk $pos has a surface but no blocks")
+                    checked++
+                    layers += blocks.maxY - blocks.minY + 1
+                    assertTrue(blocks.minY < surface.minHeight && blocks.maxY >= surface.maxHeight, "Block range misses the surface at $pos")
+                    for (lz in 0 until 16) for (lx in 0 until 16) {
+                        val h = surface.height(lx, lz)
+                        val top = blocks.state(lx, h, lz)
+                        // Void columns sit at the lowest height with nothing in them; everything else has its top block there.
+                        if (surface.color(lx, lz) ushr 24 == 0) continue
+                        assertTrue(!top.isAir, "Air at the surface of $pos ($lx, $h, $lz)")
+                        for (y in h + 1..blocks.maxY) {
+                            val above = blocks.state(lx, y, lz)
+                            assertTrue(BlockColors.look(above).kind != BlockKind.SOLID, "Solid $above above the surface of $pos ($lx, $y, $lz)")
+                        }
+                    }
+                }
+                println("${info.versionName}: $checked chunks, ${if (checked == 0) 0 else layers / checked} layers each on average")
             } finally {
                 world.close()
             }

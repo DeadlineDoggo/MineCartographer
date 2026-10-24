@@ -1,5 +1,6 @@
 package minecartographer.core.anvil
 
+import minecartographer.core.BlockState
 import java.util.concurrent.ConcurrentHashMap
 
 /** How a block shows up from above. */
@@ -19,7 +20,7 @@ class BlockLook(val kind: BlockKind, val color: Int) {
 }
 
 /**
- * Top-down colors for block names (1.13+) and numeric ids (1.2-1.12). Colors are close to
+ * Top-down colors for block names (older numeric ids are mapped to names by [LegacyBlocks]). Colors are close to
  * Minecraft's map colors; unknown and modded blocks get a guess from their name, then a neutral gray.
  */
 object BlockColors {
@@ -27,12 +28,8 @@ object BlockColors {
 
     fun look(name: String): BlockLook = cache.getOrPut(name) { classify(name.substringAfter(':')) }
 
-    fun legacy(id: Int, data: Int): BlockLook {
-        val name = LEGACY_IDS[id] ?: return if (id == 0) BlockLook.SKIP else solid(0x8A8A8A)
-        return if (id == 35 || id == 159 || id == 171 || id == 95 || id == 160) {
-            look(name.replace("white", DYE[data and 15]))
-        } else look(name)
-    }
+    fun look(state: BlockState): BlockLook =
+        if (state.name == BlockState.COLOR_BLOCK) solid(state.properties["rgb"]?.toIntOrNull(16) ?: 0x8A8A8A) else look(state.name)
 
     fun waterColor(depth: Int): Int {
         val t = (depth.coerceIn(1, 16) - 1) / 15f
@@ -145,47 +142,5 @@ object BlockColors {
     private val DYE_RGB = intArrayOf(
         0xE9ECEC, 0xF07613, 0xBD44B3, 0x3AAFD9, 0xF8C527, 0x70B919, 0xED8DAC, 0x3E4447,
         0x8E8E86, 0x158991, 0x792AAC, 0x35399D, 0x724728, 0x546D1B, 0xA12722, 0x141519,
-    )
-
-    /** Pre-1.13 numeric ids mapped to modern names (vanilla only; modded ids fall back to gray). */
-    private val LEGACY_IDS: Map<Int, String> = mapOf(
-        0 to "air", 1 to "stone", 2 to "grass_block", 3 to "dirt", 4 to "cobblestone", 5 to "oak_planks",
-        6 to "oak_sapling", 7 to "bedrock", 8 to "flowing_water", 9 to "water", 10 to "flowing_lava", 11 to "lava",
-        12 to "sand", 13 to "gravel", 14 to "gold_ore", 15 to "iron_ore", 16 to "coal_ore", 17 to "oak_log",
-        18 to "oak_leaves", 19 to "sponge", 20 to "glass", 21 to "lapis_ore", 22 to "lapis_block", 24 to "sandstone",
-        25 to "note_block", 26 to "red_bed", 27 to "powered_rail", 28 to "detector_rail", 30 to "cobweb",
-        31 to "short_grass", 32 to "dead_bush", 35 to "white_wool", 37 to "dandelion", 38 to "poppy",
-        39 to "brown_mushroom", 40 to "red_mushroom", 41 to "gold_block", 42 to "iron_block", 43 to "stone_slab",
-        44 to "stone_slab", 45 to "bricks", 46 to "tnt", 47 to "bookshelf", 48 to "mossy_cobblestone", 49 to "obsidian",
-        50 to "torch", 51 to "fire", 52 to "spawner", 53 to "oak_stairs", 54 to "chest", 55 to "redstone_wire",
-        56 to "diamond_ore", 57 to "diamond_block", 58 to "crafting_table", 59 to "wheat", 60 to "farmland",
-        61 to "furnace", 62 to "furnace", 63 to "oak_sign", 64 to "oak_door", 65 to "ladder", 66 to "rail",
-        67 to "cobblestone_stairs", 68 to "oak_wall_sign", 69 to "lever", 70 to "stone_pressure_plate", 71 to "iron_door",
-        72 to "oak_pressure_plate", 73 to "redstone_ore", 74 to "redstone_ore", 75 to "redstone_torch", 76 to "redstone_torch",
-        77 to "stone_button", 78 to "snow_layer", 79 to "ice", 80 to "snow_block", 81 to "cactus", 82 to "clay",
-        83 to "sugar_cane", 84 to "jukebox", 85 to "oak_fence", 86 to "pumpkin", 87 to "netherrack", 88 to "soul_sand",
-        89 to "glowstone", 90 to "nether_portal", 91 to "pumpkin", 92 to "cake", 93 to "repeater", 94 to "repeater",
-        95 to "white_stained_glass", 96 to "oak_trapdoor", 97 to "stone", 98 to "stone_bricks", 99 to "brown_mushroom_block",
-        100 to "red_mushroom_block", 101 to "iron_bars", 102 to "glass_pane", 103 to "melon", 104 to "pumpkin_stem",
-        105 to "melon_stem", 106 to "vine", 107 to "oak_fence_gate", 108 to "brick_stairs", 109 to "stone_brick_stairs",
-        110 to "mycelium", 111 to "lily_pad", 112 to "nether_bricks", 113 to "nether_brick_fence", 114 to "nether_brick_stairs",
-        115 to "nether_wart", 116 to "enchanting_table", 117 to "brewing_stand", 118 to "cauldron", 119 to "end_portal",
-        120 to "end_portal_frame", 121 to "end_stone", 122 to "dragon_egg", 123 to "redstone_lamp", 124 to "redstone_lamp",
-        125 to "oak_slab", 126 to "oak_slab", 127 to "cocoa", 128 to "sandstone_stairs", 129 to "emerald_ore",
-        130 to "ender_chest", 131 to "tripwire_hook", 132 to "tripwire", 133 to "emerald_block", 134 to "spruce_stairs",
-        135 to "birch_stairs", 136 to "jungle_stairs", 137 to "command_block", 138 to "beacon", 139 to "cobblestone_wall",
-        140 to "flower_pot", 141 to "carrots", 142 to "potatoes", 143 to "oak_button", 144 to "skeleton_skull", 145 to "anvil",
-        146 to "trapped_chest", 147 to "light_weighted_pressure_plate", 148 to "heavy_weighted_pressure_plate",
-        149 to "comparator", 150 to "comparator", 151 to "daylight_detector", 152 to "redstone_block", 153 to "nether_quartz_ore",
-        154 to "hopper", 155 to "quartz_block", 156 to "quartz_stairs", 157 to "activator_rail", 158 to "dropper",
-        159 to "white_terracotta", 160 to "white_stained_glass_pane", 161 to "acacia_leaves", 162 to "acacia_log",
-        163 to "acacia_stairs", 164 to "dark_oak_stairs", 165 to "slime_block", 166 to "barrier", 167 to "iron_trapdoor",
-        168 to "prismarine", 169 to "sea_lantern", 170 to "hay_block", 171 to "white_carpet", 172 to "terracotta",
-        173 to "coal_block", 174 to "packed_ice", 175 to "sunflower", 176 to "white_banner", 177 to "white_wall_banner",
-        178 to "daylight_detector", 179 to "red_sandstone", 180 to "red_sandstone_stairs", 181 to "red_sandstone_slab",
-        182 to "red_sandstone_slab", 183 to "spruce_fence_gate", 188 to "spruce_fence", 193 to "spruce_door",
-        198 to "end_rod", 199 to "chorus_plant", 200 to "chorus_flower", 201 to "purpur_block", 206 to "end_stone_bricks",
-        207 to "beetroots", 208 to "grass_path", 212 to "frosted_ice", 213 to "magma_block", 214 to "nether_wart_block",
-        215 to "red_nether_bricks", 216 to "bone_block", 251 to "white_concrete", 252 to "white_concrete_powder",
     )
 }

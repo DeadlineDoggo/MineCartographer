@@ -16,3 +16,4 @@ local.properties
 
 # Minecraft saves used for local testing (see MINECARTOGRAPHER_WORLDS in the README)
 /worlds/
+bin/

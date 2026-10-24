@@ -8,6 +8,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import minecartographer.ui.FileDialogs
+import minecartographer.viewport.RenderMode
 
 /** Window-level keyboard handling, so shortcuts work whatever has focus. Menu labels mirror these. */
 fun EditorState.handleKey(e: KeyEvent): Boolean {
@@ -49,6 +50,9 @@ fun EditorState.handleKey(e: KeyEvent): Boolean {
         Key.Delete, Key.Backspace -> clearSelected()
         Key.Escape -> if (pasteMode) cancelPaste() else clearSelection()
         Key.F -> fitToWorld()
+        Key.One -> setRenderMode(RenderMode.Map)
+        Key.Two -> setRenderMode(RenderMode.Blocks)
+        Key.Three -> setRenderMode(RenderMode.Textured)
         Key.Comma -> rotate(-1)
         Key.Period -> rotate(+1)
         Key.Equals, Key.NumPadAdd -> zoomBy(1.25)

@@ -11,16 +11,20 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import minecartographer.core.ChunkPos
+import minecartographer.core.ChunkBlocks
 import minecartographer.core.ChunkSurface
 import minecartographer.core.WorldSource
 import minecartographer.core.rotated
+import minecartographer.textures.BlockModelSource
+import minecartographer.textures.FlatModels
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Loads and renders chunk tiles on background threads, in three levels:
- *  - surfaces (heights and colors, ~2 KiB each) are what is slow to get, since they come from disk
- *    and NBT. Many are kept, also for chunks around the view, so panning and zooming only re-render.
+ *  - chunk data (a [ChunkSurface] for the Map mode, [ChunkBlocks] for the others) is what is slow to get,
+ *    since it comes from disk and NBT. Plenty is kept, also for chunks around the view, so panning,
+ *    zooming and changing settings only re-render.
  *  - tiles (bitmaps per LOD and rotation) are big, so only a memory-bounded LRU of them is kept.
  *  - at low LODs, [block] composites of [BLOCK_SIZE] x [BLOCK_SIZE] tiles, so a zoomed-out view
  *    needs few draws.
@@ -33,7 +37,7 @@ class ChunkTileCache(
     scope: CoroutineScope,
     workers: Int = (Runtime.getRuntime().availableProcessors() - 1).coerceIn(1, 8),
     private val maxBytes: Long = 512L shl 20,
-    private val maxSurfaces: Int = 40_000,
+    private val maxDataBytes: Long = 256L shl 20,
     private val maxBlockBytes: Long = 256L shl 20,
 ) {
     /** [rotation] is part of the key: the visible faces depend on the side the chunk is seen from. */
@@ -41,8 +45,10 @@ class ChunkTileCache(
         val surfaceKey get() = SurfaceKey(worldId, pos)
     }
     private data class SurfaceKey(val worldId: String, val pos: ChunkPos)
+    /** Chunk data of one kind: [blocks] false for the surface, true for the visible blocks. */
+    private data class DataKey(val worldId: String, val pos: ChunkPos, val blocks: Boolean)
     private class Job(val key: Key, val world: WorldSource, val priority: Float)
-    private class Prefetch(val key: SurfaceKey, val world: WorldSource)
+    private class Prefetch(val key: DataKey, val world: WorldSource)
     /** A block of chunks in view space; [rotation] keeps blocks of different rotations apart. */
     private data class BlockKey(val bx: Int, val bz: Int, val lod: Int, val rotation: Int)
     private class Block(val parts: List<BlockPart>, val composite: BlockComposite)
@@ -57,7 +63,9 @@ class ChunkTileCache(
     private val requestedBlocks = LinkedHashMap<BlockKey, List<BlockPart>>()
     private var pendingBlocks = ArrayDeque<Pair<BlockKey, List<BlockPart>>>()
     private val compositing = HashMap<BlockKey, List<BlockPart>>()
-    private val surfaces = LinkedHashMap<SurfaceKey, ChunkSurface>(4096, 0.75f, true)
+    private val data = LinkedHashMap<DataKey, Any>(4096, 0.75f, true)
+    private var dataBytes = 0L
+    /** Chunks with nothing to draw (not fully generated, or failed to load). */
     private val empty = HashSet<SurfaceKey>()
 
     /** Requests of the frame being drawn; become [pending] at [endFrame]. */
@@ -65,7 +73,7 @@ class ChunkTileCache(
     private var pending = ArrayDeque<Job>()
     private var prefetching = ArrayDeque<Prefetch>()
     private val inFlight = HashSet<Key>()
-    private val loading = HashSet<SurfaceKey>()
+    private val loading = HashSet<DataKey>()
     private val wakeUp = Channel<Unit>(Channel.CONFLATED)
     private var epoch = 0
 
@@ -76,20 +84,33 @@ class ChunkTileCache(
     var settings: RenderSettings = RenderSettings()
         set(value) {
             if (value == field) return
-            synchronized(lock) {
-                field = value
-                epoch++
-                evicted += tiles.values
-                tiles.clear()
-                bytes = 0
-                pending.clear()
-                blocks.values.mapTo(evicted) { it.composite }
-                blocks.clear()
-                blockBytes = 0
-                pendingBlocks.clear()
-            }
-            generation++
+            synchronized(lock) { field = value }
+            invalidateTiles()
         }
+
+    /** Models for the Textured mode (null: none found, the Blocks look is used instead). */
+    var textures: BlockModelSource? = null
+        set(value) {
+            if (value === field) return
+            synchronized(lock) { field = value }
+            if (settings.mode == RenderMode.Textured) invalidateTiles()
+        }
+
+    /** Drops every tile and block so they are rendered again; loaded chunk data is kept. */
+    private fun invalidateTiles() {
+        synchronized(lock) {
+            epoch++
+            evicted += tiles.values
+            tiles.clear()
+            bytes = 0
+            pending.clear()
+            blocks.values.mapTo(evicted) { it.composite }
+            blocks.clear()
+            blockBytes = 0
+            pendingBlocks.clear()
+        }
+        generation++
+    }
 
     init {
         // Own threads, a notch below normal priority, so decoding never competes with the UI thread
@@ -150,9 +171,10 @@ class ChunkTileCache(
     fun prefetch(chunks: List<Pair<WorldSource, ChunkPos>>) {
         synchronized(lock) {
             prefetching = ArrayDeque(chunks.size)
+            val blocks = settings.mode != RenderMode.Map
             for ((world, pos) in chunks) {
-                val key = SurfaceKey(world.id, pos)
-                if (key !in surfaces && key !in empty) prefetching += Prefetch(key, world)
+                val key = DataKey(world.id, pos, blocks)
+                if (key !in data && SurfaceKey(world.id, pos) !in empty) prefetching += Prefetch(key, world)
             }
             if (prefetching.isEmpty()) return
         }
@@ -181,7 +203,7 @@ class ChunkTileCache(
     }
 
     private sealed interface Work
-    private class RenderTile(val job: Job, val epoch: Int, val settings: RenderSettings) : Work
+    private class RenderTile(val job: Job, val epoch: Int, val settings: RenderSettings, val textures: BlockModelSource?) : Work
     private class LoadSurface(val prefetch: Prefetch) : Work
     private class Composite(val key: BlockKey, val parts: List<BlockPart>, val epoch: Int, val hs: Double) : Work
 
@@ -191,7 +213,7 @@ class ChunkTileCache(
             val job = pending.removeFirst()
             if (job.key in inFlight || job.key in tiles) continue
             inFlight += job.key
-            return RenderTile(job, epoch, settings)
+            return RenderTile(job, epoch, settings, textures)
         }
         while (pendingBlocks.isNotEmpty()) {
             val (key, parts) = pendingBlocks.removeFirst()
@@ -201,7 +223,7 @@ class ChunkTileCache(
         }
         while (prefetching.isNotEmpty()) {
             val p = prefetching.removeFirst()
-            if (p.key in surfaces || p.key in empty || p.key in loading) continue
+            if (p.key in data || SurfaceKey(p.key.worldId, p.key.pos) in empty || p.key in loading) continue
             return LoadSurface(p)
         }
         return null
@@ -217,7 +239,7 @@ class ChunkTileCache(
             }
             when (work) {
                 null -> wakeUp.receive()
-                is LoadSurface -> loadSurface(work.prefetch.world, work.prefetch.key)
+                is LoadSurface -> load(work.prefetch.world, work.prefetch.key)
                 is RenderTile -> renderTile(work)
                 is Composite -> composite(work)
             }
@@ -226,9 +248,16 @@ class ChunkTileCache(
 
     private fun renderTile(work: RenderTile) {
         val key = work.job.key
+        val settings = work.settings
         val tile = runCatching {
-            loadSurface(work.job.world, key.surfaceKey)?.let {
-                ChunkTileRenderer.render(it.rotated(key.rotation), key.lod, work.settings)
+            when (settings.mode) {
+                RenderMode.Map -> (load(work.job.world, DataKey(key.worldId, key.pos, blocks = false)) as ChunkSurface?)?.let {
+                    ChunkTileRenderer.render(it.rotated(key.rotation), key.lod, settings)
+                }
+                RenderMode.Blocks, RenderMode.Textured -> (load(work.job.world, DataKey(key.worldId, key.pos, blocks = true)) as ChunkBlocks?)?.let {
+                    val models = if (settings.mode == RenderMode.Textured) work.textures ?: FlatModels else FlatModels
+                    BlockTileRenderer.render(it.rotated(key.rotation), key.rotation, key.lod, settings, models)
+                }
             }
         }.onFailure { it.printStackTrace() }.getOrNull()
 
@@ -278,33 +307,40 @@ class ChunkTileCache(
         generation++
     }
 
-    /** Cached surface, or reads it from the world (null for chunks with nothing to draw). */
-    private fun loadSurface(world: WorldSource, key: SurfaceKey): ChunkSurface? {
+    /** Cached chunk data, or reads it from the world (null for chunks with nothing to draw). */
+    private fun load(world: WorldSource, key: DataKey): Any? {
+        val blank = SurfaceKey(key.worldId, key.pos)
         synchronized(lock) {
-            surfaces[key]?.let { return it }
-            if (key in empty) return null
+            data[key]?.let { return it }
+            if (blank in empty) return null
             loading += key
         }
-        val surface = try {
-            world.loadSurface(key.pos)
+        val loaded: Any? = try {
+            if (key.blocks) world.loadBlocks(key.pos) else world.loadSurface(key.pos)
         } catch (e: Exception) {
             e.printStackTrace()
             null
         }
         synchronized(lock) {
             loading -= key
-            if (surface == null) {
-                empty += key
+            if (loaded == null) {
+                empty += blank
             } else {
-                surfaces[key] = surface
-                val it = surfaces.entries.iterator()
-                while (surfaces.size > maxSurfaces && it.hasNext()) {
-                    it.next()
+                data.put(key, loaded)?.let { dataBytes -= sizeOf(it) }
+                dataBytes += sizeOf(loaded)
+                val it = data.entries.iterator()
+                while (dataBytes > maxDataBytes && it.hasNext()) {
+                    dataBytes -= sizeOf(it.next().value)
                     it.remove()
                 }
             }
         }
-        return surface
+        return loaded
+    }
+
+    private fun sizeOf(value: Any): Long = when (value) {
+        is ChunkBlocks -> value.byteSize
+        else -> SURFACE_BYTES
     }
 
     companion object {
@@ -312,6 +348,9 @@ class ChunkTileCache(
         const val BLOCK_SIZE = 8
         /** at LODs up to this one, where there are many small tiles on screen. */
         const val MAX_BLOCK_LOD = 2
+
+        /** Two arrays of 256 ints plus object overhead. */
+        private const val SURFACE_BYTES = 2 * (256 * 4 + 16) + 64L
 
         /** Sorts on primitive longs (priority bits, then index): sorting thousands of jobs each frame stays cheap. */
         private fun sortedByPriority(jobs: Collection<Job>): List<Job> {

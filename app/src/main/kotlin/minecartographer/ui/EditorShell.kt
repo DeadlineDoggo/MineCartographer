@@ -43,6 +43,7 @@ import minecartographer.editor.DockTab
 import minecartographer.editor.EditorState
 import minecartographer.editor.Tool
 import minecartographer.viewport.ChunkViewport
+import minecartographer.viewport.RenderMode
 import kotlin.math.roundToInt
 
 private val MIN_DOCK_WIDTH = 200.dp
@@ -171,6 +172,10 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             MenuItem("Fit world", "F") { state.fitToWorld() },
             MenuItem("Rotate left", ",") { state.rotate(-1) },
             MenuItem("Rotate right", ".") { state.rotate(+1) },
+            MenuSeparator,
+            *RenderMode.entries.mapIndexed { i, mode ->
+                MenuItem("${mode.label} mode", "${i + 1}", checked = s.mode == mode) { state.setRenderMode(mode) }
+            }.toTypedArray(),
             MenuSeparator,
             MenuItem("Chunk borders", checked = s.chunkBorders) { state.updateRenderSettings(s.copy(chunkBorders = !s.chunkBorders)) },
             MenuItem("Layer colors", checked = state.showLayerColors) { state.showLayerColors = !state.showLayerColors },
@@ -315,6 +320,7 @@ private fun BoxScope.ViewportOverlay(state: EditorState) {
     Compass(state.rotation, Modifier.align(Alignment.TopEnd).padding(12.dp).size(64.dp))
     RoundButton(Icons.RotateLeft, "Rotate view left (,)", Modifier.align(Alignment.CenterStart).padding(start = 12.dp)) { state.rotate(-1) }
     RoundButton(Icons.RotateRight, "Rotate view right (.)", Modifier.align(Alignment.CenterEnd).padding(end = 12.dp)) { state.rotate(+1) }
+    RenderModeSwitcher(state, Modifier.align(Alignment.BottomStart).padding(12.dp))
     LoadingLayer(state, visible = !state.startingUp && state.loading != null, fullWindow = false)
     val clip = state.clipboard
     if (state.pasteMode && clip != null) {
