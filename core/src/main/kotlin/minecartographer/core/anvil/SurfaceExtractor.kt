@@ -45,6 +45,20 @@ object SurfaceExtractor {
         val allAir = states.all { it.isAir }
     }
 
+    /** How many of each block the whole chunk holds, air left out; null for chunks that aren't fully generated. */
+    fun countBlocks(root: CompoundTag, legacy: LegacyMapping = LegacyMapping.VANILLA): Map<BlockState, Int>? {
+        val sections = decode(root, legacy) ?: return null
+        val counts = HashMap<BlockState, Int>()
+        for (s in sections) {
+            if (s.allAir) continue
+            if (s.states.size == 1) { counts.merge(s.states[0], 4096, Int::plus); continue }
+            val perIndex = IntArray(s.states.size)
+            for (y in 0..15) for (z in 0..15) for (x in 0..15) perIndex[s.index(x, y, z)]++
+            for (i in perIndex.indices) if (perIndex[i] > 0 && !s.states[i].isAir) counts.merge(s.states[i], perIndex[i], Int::plus)
+        }
+        return counts
+    }
+
     /** [legacy] names numeric block ids (before 1.13); worlds with mods bring their own table. */
     fun extract(root: CompoundTag, pos: ChunkPos, legacy: LegacyMapping = LegacyMapping.VANILLA): ChunkSurface? {
         val sections = decode(root, legacy)?.filterNot { it.allSkip } ?: return null

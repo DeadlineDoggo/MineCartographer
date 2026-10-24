@@ -93,6 +93,7 @@ private fun EditorLayout(state: EditorState, onExit: () -> Unit) {
                 ChunkViewport(state, Modifier.fillMaxSize())
                 ViewportOverlay(state)
                 ModsDrawer(state)
+                AnalyzeDrawer(state)
                 BlockMappingDrawer(state)
                 HelpOverlay(state)
             }
@@ -164,6 +165,8 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             MenuItem("Invert", "Ctrl+I") { state.invertSelection() },
             MenuSeparator,
             MenuItem("Layer to selection") { state.activeStack?.let { state.layerToSelection(it.activeId) } },
+            MenuSeparator,
+            MenuItem("Analyze selection…", enabled = state.selection.isNotEmpty(), checked = state.analyzeVisible) { state.analyzeVisible = !state.analyzeVisible },
         )
     },
     Menu("Layer") {

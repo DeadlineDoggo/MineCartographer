@@ -204,6 +204,10 @@ fun SelectionPanel(state: EditorState) {
         }
         Spacer(Modifier.height(6.dp))
         TextButton("Restore original chunks", Modifier.fillMaxWidth(), icon = Icons.Undo, enabled = has) { state.restoreOriginal() }
+        Spacer(Modifier.height(6.dp))
+        TextButton(if (state.analyzeVisible) "Hide analysis" else "Analyze selection…", Modifier.fillMaxWidth(), icon = Icons.Analyze, enabled = has) {
+            state.analyzeVisible = !state.analyzeVisible
+        }
         Spacer(Modifier.height(4.dp))
         Txt("Copy, Cut and Clear act on the active layer. Copy visible takes what you see.",
             color = EditorTheme.textFaint, size = 11.sp, maxLines = 3)
@@ -251,27 +255,28 @@ private fun TransformSection(state: EditorState) {
         TextButton("Turn right", Modifier.weight(1f), icon = Icons.RotateRight) { state.turnChunks(1) }
     }
     Spacer(Modifier.height(6.dp))
+    // Shift makes the steps bigger, like on the toolbar over the map.
+    fun step() = if (androidx.compose.ui.input.key.Key.ShiftLeft in state.heldKeys || androidx.compose.ui.input.key.Key.ShiftRight in state.heldKeys) 10 else 1
     val dy = refs.map { it.dy }.distinct().singleOrNull()
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
         Txt("Height", Modifier.width(56.dp), color = EditorTheme.textDim, size = 12.sp)
-        TextButton("−10", Modifier.weight(1f)) { state.raiseChunks(-10) }
-        TextButton("−1", Modifier.weight(1f)) { state.raiseChunks(-1) }
-        Txt(dy?.let { if (it > 0) "+$it" else "$it" } ?: "mixed", Modifier.width(44.dp), size = 12.sp, mono = true)
-        TextButton("+1", Modifier.weight(1f)) { state.raiseChunks(1) }
-        TextButton("+10", Modifier.weight(1f)) { state.raiseChunks(10) }
+        IconButton(Icons.Lower, "Lower by 1 block (Shift: 10)", size = 28.dp, iconSize = 14.dp) { state.raiseChunks(-step()) }
+        Txt(dy?.let { if (it > 0) "+$it" else "$it" } ?: "mixed", Modifier.weight(1f), size = 12.sp, mono = true)
+        IconButton(Icons.Raise, "Raise by 1 block (Shift: 10)", size = 28.dp, iconSize = 14.dp) { state.raiseChunks(step()) }
     }
-    Spacer(Modifier.height(6.dp))
+    Spacer(Modifier.height(4.dp))
     val cut = refs.map { it.cut }.distinct()
     val oneCut = cut.singleOrNull()
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    val cutOn = cut.any { it != null }
+    Row(verticalAlignment = Alignment.CenterVertically) {
         Txt("Cut at", Modifier.width(56.dp), color = EditorTheme.textDim, size = 12.sp)
-        if (cut.size == 1 && oneCut == null) {
+        if (!cutOn) {
             TextButton("Keep original below…", Modifier.weight(1f)) { state.cutChunks(EditorState.SURFACE_Y.toInt()) }
         } else {
-            TextButton("−1", Modifier.weight(1f), enabled = oneCut != null) { oneCut?.let { state.cutChunks(it - 1) } }
-            Txt(oneCut?.let { "Y $it" } ?: "mixed", Modifier.width(56.dp), size = 12.sp, mono = true)
-            TextButton("+1", Modifier.weight(1f), enabled = oneCut != null) { oneCut?.let { state.cutChunks(it + 1) } }
-            TextButton("Off", Modifier.weight(1f)) { state.cutChunks(null) }
+            IconButton(Icons.Lower, "Cut 1 block lower (Shift: 10)", enabled = oneCut != null, size = 28.dp, iconSize = 14.dp) { oneCut?.let { state.cutChunks(it - step()) } }
+            Txt(oneCut?.let { "Y $it" } ?: "mixed", Modifier.weight(1f), size = 12.sp, mono = true)
+            IconButton(Icons.Raise, "Cut 1 block higher (Shift: 10)", enabled = oneCut != null, size = 28.dp, iconSize = 14.dp) { oneCut?.let { state.cutChunks(it + step()) } }
+            IconButton(Icons.Close, "Stop cutting", size = 28.dp, iconSize = 10.dp) { state.cutChunks(null) }
         }
     }
     Spacer(Modifier.height(6.dp))

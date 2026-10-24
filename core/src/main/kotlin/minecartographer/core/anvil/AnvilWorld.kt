@@ -94,6 +94,11 @@ class AnvilWorld private constructor(
         return SurfaceExtractor.extractBlocks(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos, legacy)
     }
 
+    override fun countBlocks(pos: ChunkPos): Map<minecartographer.core.BlockState, Int>? {
+        val raw = readChunk(pos) ?: return null
+        return SurfaceExtractor.countBlocks(raw.nbt(SurfaceExtractor.UNUSED_TAGS), legacy)
+    }
+
     fun readChunk(pos: ChunkPos): RawChunk? = if (!hasChunk(pos)) null else region(regions, regionDir, pos)?.read(pos)
 
     /** Entities live in their own region files since 1.17; null for older worlds or no entities. */

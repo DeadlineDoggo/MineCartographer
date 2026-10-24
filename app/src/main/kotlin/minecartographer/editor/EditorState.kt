@@ -607,9 +607,21 @@ class EditorState {
     /** The shortcuts and tips card over the map. */
     var helpVisible by mutableStateOf(false)
 
+    // The Mods & textures and Analyze selection panels share the place next to the left dock: one at a time.
+    private var modsShown by mutableStateOf(false)
+    private var analyzeShown by mutableStateOf(false)
+
     /** The Mods & textures panel over the map, and its width. */
-    var modsPanelVisible by mutableStateOf(false)
+    var modsPanelVisible: Boolean
+        get() = modsShown
+        set(value) { modsShown = value; if (value) analyzeShown = false }
     var modsPanelWidth by mutableStateOf(640.dp)
+
+    /** The Analyze selection panel over the map, and its width. */
+    var analyzeVisible: Boolean
+        get() = analyzeShown
+        set(value) { analyzeShown = value; if (value) modsShown = false }
+    var analyzeWidth by mutableStateOf(720.dp)
 
     /** The pack [world] is drawn with, once its textures are loaded. */
     fun modelsOf(world: WorldSource): BlockModels? = tiles.textures[world.id] as? BlockModels

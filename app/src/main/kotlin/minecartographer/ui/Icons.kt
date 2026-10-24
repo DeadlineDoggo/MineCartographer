@@ -214,6 +214,12 @@ object Icons {
 
     val Close = EditorIcon { color -> line(color, 0.25f, 0.25f, 0.75f, 0.75f); line(color, 0.75f, 0.25f, 0.25f, 0.75f) }
 
+    /** A magnifying glass. */
+    val Analyze = EditorIcon { color ->
+        drawCircle(color, radius = size.minDimension * 0.27f, center = Offset(size.width * 0.42f, size.height * 0.42f), style = stroke())
+        line(color, 0.62f, 0.62f, 0.88f, 0.88f)
+    }
+
     /** Two opposite arrows: blocks of one world mapped to another's. */
     val Mapping = EditorIcon { color ->
         line(color, 0.12f, 0.34f, 0.84f, 0.34f)

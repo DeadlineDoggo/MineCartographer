@@ -140,7 +140,7 @@ private fun scan(state: EditorState, stack: LayerStack, refs: Collection<ChunkRe
 
 /** Texture bitmaps per block models, so the lists don't decode a texture twice. */
 @Composable
-private fun rememberThumbs(): (BlockModels?) -> ThumbCache? {
+internal fun rememberThumbs(): (BlockModels?) -> ThumbCache? {
     val caches = remember { HashMap<BlockModels, ThumbCache>() }
     return { models -> models?.let { caches.getOrPut(it) { ThumbCache(it) } } }
 }
@@ -197,10 +197,6 @@ private fun BlockPicker(state: EditorState, stack: LayerStack, layer: Layer, key
     val conversion = sourceWorld?.let { state.conversionFor(it, stack, layer.blockMap) }
     val current = conversion?.mapped(source)
     val chosen = key in layer.blockMap
-    var filter by remember(key) { mutableStateOf("") }
-    val blocks = remember(models, Upgrade.tables) { vanillaBlocks(models) }
-    val shown = blocks.filter { filter.isBlank() || filter.lowercase().trim() in it }
-
     Column(modifier.background(EditorTheme.panel).border(1.dp, EditorTheme.border)) {
         Row(Modifier.fillMaxWidth().height(36.dp).padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Txt("CHOOSE A BLOCK", Modifier.weight(1f), color = EditorTheme.textDim, size = 11.sp, weight = FontWeight.SemiBold)
@@ -221,30 +217,48 @@ private fun BlockPicker(state: EditorState, stack: LayerStack, layer: Layer, key
             }
             if (chosen) TextButton("Back to automatic", Modifier.padding(top = 8.dp)) { state.mapBlock(layer.id, key, null) }
             Spacer(Modifier.height(8.dp))
-            TextInput(filter, { filter = it }, Modifier.fillMaxWidth())
-            Txt("${shown.size} blocks · click one to use it", Modifier.padding(vertical = 4.dp), color = EditorTheme.textFaint, size = 11.sp)
-            val grid = rememberLazyGridState()
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                LazyVerticalGrid(GridCells.Adaptive(76.dp), Modifier.fillMaxSize().padding(end = 10.dp), grid) {
-                    items(shown, key = { it }) { name ->
-                        val target = BlockState.of(name)
-                        val isCurrent = target == current?.target
-                        WithTooltip(name) {
-                            Column(
-                                Modifier.padding(3.dp).clip(RoundedCornerShape(4.dp))
-                                    .background(if (isCurrent) EditorTheme.accentSoft else EditorTheme.panelRaised)
-                                    .border(1.dp, if (isCurrent) EditorTheme.accent else Color.Transparent, RoundedCornerShape(4.dp))
-                                    .clickable { state.mapBlock(layer.id, key, Conversion.format(target)) }.padding(4.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                            ) {
-                                StateThumb(cache, models, target, 48.dp)
-                                Txt(name.removePrefix("minecraft:"), color = EditorTheme.textDim, size = 9.sp)
-                            }
+            BlockGrid(models, current?.target, Modifier.weight(1f).fillMaxWidth()) { target ->
+                state.mapBlock(layer.id, key, Conversion.format(target))
+            }
+        }
+    }
+}
+
+/**
+ * The blocks of the world [models] draws (its blockstates), with their textures and a search field;
+ * clicking one picks it. [current] is marked.
+ */
+@Composable
+internal fun BlockGrid(models: BlockModels?, current: BlockState?, modifier: Modifier, onPick: (BlockState) -> Unit) {
+    val thumbs = rememberThumbs()
+    val cache = thumbs(models)
+    var filter by remember { mutableStateOf("") }
+    val blocks = remember(models, Upgrade.tables) { vanillaBlocks(models) }
+    val shown = blocks.filter { filter.isBlank() || filter.lowercase().trim() in it }
+    Column(modifier) {
+        TextInput(filter, { filter = it }, Modifier.fillMaxWidth())
+        Txt("${shown.size} blocks · click one to use it", Modifier.padding(vertical = 4.dp), color = EditorTheme.textFaint, size = 11.sp)
+        val grid = rememberLazyGridState()
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            LazyVerticalGrid(GridCells.Adaptive(76.dp), Modifier.fillMaxSize().padding(end = 10.dp), grid) {
+                items(shown, key = { it }) { name ->
+                    val target = BlockState.of(name)
+                    val isCurrent = target.name == current?.name
+                    WithTooltip(name) {
+                        Column(
+                            Modifier.padding(3.dp).clip(RoundedCornerShape(4.dp))
+                                .background(if (isCurrent) EditorTheme.accentSoft else EditorTheme.panelRaised)
+                                .border(1.dp, if (isCurrent) EditorTheme.accent else Color.Transparent, RoundedCornerShape(4.dp))
+                                .clickable { onPick(target) }.padding(4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            StateThumb(cache, models, target, 48.dp)
+                            Txt(name.removePrefix("minecraft:"), color = EditorTheme.textDim, size = 9.sp)
                         }
                     }
                 }
-                VerticalScrollbar(rememberScrollbarAdapter(grid), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
             }
+            VerticalScrollbar(rememberScrollbarAdapter(grid), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
         }
     }
 }
@@ -263,7 +277,7 @@ private fun vanillaBlocks(models: BlockModels?): List<String> {
 
 /** A block's texture in [models]' world, or its map color with a "?" when it has none. */
 @Composable
-private fun StateThumb(cache: ThumbCache?, models: BlockModels?, state: BlockState, size: Dp) {
+internal fun StateThumb(cache: ThumbCache?, models: BlockModels?, state: BlockState, size: Dp) {
     val texture by produceState<String?>(null, models, state) {
         value = if (models == null) null else withContext(Dispatchers.IO) { runCatching { models.info(state).texture }.getOrNull() }
     }

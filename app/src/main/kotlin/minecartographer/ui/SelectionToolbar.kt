@@ -57,6 +57,8 @@ fun SelectionToolbar(state: EditorState, modifier: Modifier) {
                 if (state.copy()) state.pasteInPlace()
             }
             Txt("Lift to a layer to turn or raise", Modifier.padding(start = 4.dp, end = 8.dp), color = EditorTheme.textDim, size = 12.sp)
+            Divider()
+            AnalyzeButton(state)
             return@Row
         }
         val refs = state.transformTargets().values
@@ -84,8 +86,14 @@ fun SelectionToolbar(state: EditorState, modifier: Modifier) {
         }
         Divider()
         IconButton(Icons.Undo, "Reset turn, height and cut", enabled = refs.any { it.transformed }) { state.resetChunkTransforms() }
+        Divider()
+        AnalyzeButton(state)
     }
 }
+
+@Composable
+private fun AnalyzeButton(state: EditorState) = IconButton(Icons.Analyze, "Analyze selection: every block in it, unknown and mapped ones",
+    selected = state.analyzeVisible) { state.analyzeVisible = !state.analyzeVisible }
 
 @Composable
 private fun Divider() = Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(22.dp).background(EditorTheme.border))

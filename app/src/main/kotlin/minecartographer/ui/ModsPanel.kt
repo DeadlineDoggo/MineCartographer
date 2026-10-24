@@ -77,7 +77,7 @@ private val MAX_PANEL_WIDTH = 1400.dp
 @Composable
 fun BoxScope.ModsDrawer(state: EditorState) {
     val world = state.activeWorld as? AnvilWorld ?: return
-    if (!state.hasMods(world)) return
+    if (!state.hasMods(world) || state.analyzeVisible) return
     if (!state.modsPanelVisible) {
         Box(
             Modifier.align(Alignment.TopStart).padding(top = 52.dp).overMap(state).clip(RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp))
@@ -289,7 +289,7 @@ private fun sourceColor(source: BlockModels.Source?) = when (source) {
 }
 
 @Composable
-private fun BlockDetail(state: EditorState, world: AnvilWorld, models: BlockModels, thumbs: ThumbCache, key: String, info: BlockModels.BlockInfo?) {
+internal fun BlockDetail(state: EditorState, world: AnvilWorld, models: BlockModels, thumbs: ThumbCache, key: String, info: BlockModels.BlockInfo?) {
     val blockName = BlockColors.stateOf(key).name
     var onlyThisMod by remember(key) { mutableStateOf(true) }
     var filter by remember(key) { mutableStateOf("") }
