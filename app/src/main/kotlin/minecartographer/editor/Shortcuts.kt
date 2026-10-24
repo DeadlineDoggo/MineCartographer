@@ -9,19 +9,21 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import minecartographer.ui.FileDialogs
+import minecartographer.ui.TextFocus
 import minecartographer.viewport.RenderMode
 
 /** Window-level keyboard handling, so shortcuts work whatever has focus. Menu labels mirror these. */
 fun EditorState.handleKey(e: KeyEvent): Boolean {
+    val typing = textEditing || TextFocus.focused
     when (e.type) {
         KeyEventType.KeyUp -> {
             heldKeys -= e.key
             return false
         }
-        KeyEventType.KeyDown -> if (!textEditing) heldKeys += e.key
+        KeyEventType.KeyDown -> if (!typing) heldKeys += e.key
         else -> return false
     }
-    if (textEditing) return false
+    if (typing) return false
 
     val ctrl = e.isCtrlPressed
     val shift = e.isShiftPressed

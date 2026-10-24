@@ -177,6 +177,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                 val dt = if (last == 0L) 0f else (now - last) / 1e9f
                 last = now
                 val keys = state.heldKeys
+                if (state.textEditing || minecartographer.ui.TextFocus.focused) return@withFrameNanos
                 if (Key.CtrlLeft in keys || Key.CtrlRight in keys) return@withFrameNanos
                 var dx = 0f
                 var dy = 0f

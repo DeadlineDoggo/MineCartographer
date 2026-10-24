@@ -32,6 +32,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -150,15 +152,22 @@ fun TextButton(
     }
 }
 
+/** Whether a [TextInput] has the keyboard focus: typing there must not reach map shortcuts or panning. */
+object TextFocus {
+    var focused by androidx.compose.runtime.mutableStateOf(false)
+}
+
 @Composable
 fun TextInput(value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier) {
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { TextFocus.focused = false } }
     androidx.compose.foundation.text.BasicTextField(
         value = value,
         onValueChange = onChange,
         singleLine = true,
         textStyle = TextStyle(color = EditorTheme.text, fontSize = 13.sp),
         cursorBrush = androidx.compose.ui.graphics.SolidColor(EditorTheme.accent),
-        modifier = modifier.clip(RoundedCornerShape(5.dp)).background(EditorTheme.panelRaised)
+        modifier = modifier.onFocusChanged { TextFocus.focused = it.isFocused }
+            .clip(RoundedCornerShape(5.dp)).background(EditorTheme.panelRaised)
             .border(1.dp, EditorTheme.border, RoundedCornerShape(5.dp))
             .padding(horizontal = 10.dp, vertical = 8.dp),
     )
