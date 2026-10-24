@@ -69,6 +69,23 @@ upgrades old chunks one by one when it loads them. MineCartographer relies on th
 - Upgrading only works forwards, so chunks from a world **newer** than the base world can't be
   exported. Use the newest world as the base and paste older ones into it.
 
+**Turning and height.** In the Selection tab, the chunks of a pasted layer (the selected ones, or the
+whole layer) can be turned by quarter turns and raised or lowered block by block. Blocks turn with
+them: stairs, doors, rails, fences, signs, item frames and so on keep facing the right way. Raised
+chunks leave the original world below them, and **Cut at** keeps the original world below a height
+too, so a pasted building can sit on the terrain without bringing its own underground. All of this
+works across versions: a raised or cut chunk from an older world is converted to the base world's
+version on the spot (blocks, biomes, chests and their items, signs, flower pots, heads, beds, banners,
+entities), using the conversion tables of your newest installed Minecraft jar. Before 1.13 only vanilla
+blocks turn their facing; modded ones move but keep theirs. The map shows the result exactly as it
+will be exported.
+
+**Modded blocks.** Blocks from mods the base world doesn't have (a 1.6.4 modpack pasted into vanilla
+1.20.1, or a world of another modpack) are mapped to vanilla blocks: by their name (planks, logs, glass,
+wool, ore...) and otherwise by the color of their texture; plants, pipes and cables become air. The
+mapping button on the layer opens the list of what each block becomes, marks guesses by color, and lets
+you pick another block. The choice is saved with the layer.
+
 Moved chunks get their coordinates, block entities, entities and scheduled ticks updated. Their
 lighting is recalculated by the game, and structure references (villages, strongholds and so on)
 are removed from them so they don't point at the wrong place.
@@ -138,7 +155,7 @@ chunks were left out. Undo history and the clipboard are not saved.
 The file is plain XML, so you can read it or keep it in version control:
 
 ```xml
-<minecartographer-project format="1" app-version="0.2.0-alpha">
+<minecartographer-project format="1" app-version="0.3.0-alpha">
   <worlds active="w0">
     <world id="w0" name="My World" kind="folder" path="saves/My World" absolute-path="C:\...\My World"/>
     <world id="w1" name="Old World" kind="folder" path="saves/Old World" absolute-path="C:\...\Old World">
