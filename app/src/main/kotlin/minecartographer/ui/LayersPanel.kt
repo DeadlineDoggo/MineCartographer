@@ -130,6 +130,13 @@ private fun LayerRow(state: EditorState, stack: LayerStack, layer: Layer, active
             }
             Txt(layerSummary(stack, layer), color = EditorTheme.textDim, size = 11.sp)
         }
+        // Chunks with blocks this world doesn't have: open what they become.
+        if (state.needsBlockMap(layer, stack)) {
+            IconButton(Icons.Mapping, "Block mapping: what this layer's modded blocks become here",
+                selected = state.blockMapLayer == layer.id, size = 26.dp, iconSize = 14.dp) {
+                state.blockMapLayer = if (state.blockMapLayer == layer.id) null else layer.id
+            }
+        }
     }
 }
 

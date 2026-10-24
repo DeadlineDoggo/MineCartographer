@@ -14,6 +14,7 @@ import minecartographer.core.ChunkPos
 import minecartographer.core.ChunkBlocks
 import minecartographer.core.ChunkSurface
 import minecartographer.core.WorldSource
+import minecartographer.core.anvil.TransformedChunk
 import minecartographer.core.rotated
 import minecartographer.textures.BlockModelSource
 import minecartographer.textures.FlatModels
@@ -109,12 +110,12 @@ class ChunkTileCache(
             val it = data.entries.iterator()
             while (it.hasNext()) {
                 val e = it.next()
-                if (e.key.worldId in worldIds) {
+                if (TransformedChunk.baseId(e.key.worldId) in worldIds) {
                     dataBytes -= sizeOf(e.value)
                     it.remove()
                 }
             }
-            empty.removeIf { it.worldId in worldIds }
+            empty.removeIf { TransformedChunk.baseId(it.worldId) in worldIds }
         }
         invalidateTiles()
     }
@@ -278,7 +279,7 @@ class ChunkTileCache(
                     ChunkTileRenderer.render(it.rotated(key.rotation), key.lod, settings)
                 }
                 RenderMode.Blocks, RenderMode.Textured -> (load(work.job.world, DataKey(key.worldId, key.pos, blocks = true)) as ChunkBlocks?)?.let {
-                    val models = if (settings.mode == RenderMode.Textured) work.textures[key.worldId] ?: FlatModels else FlatModels
+                    val models = if (settings.mode == RenderMode.Textured) work.textures[TransformedChunk.baseId(key.worldId)] ?: FlatModels else FlatModels
                     BlockTileRenderer.render(it.rotated(key.rotation), key.rotation, key.lod, settings, models)
                 }
             }

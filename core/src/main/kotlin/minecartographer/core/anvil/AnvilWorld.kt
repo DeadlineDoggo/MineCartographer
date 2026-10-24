@@ -76,7 +76,7 @@ class AnvilWorld private constructor(
     val folder: Path get() = info.folder
 
     /** Numeric block ids (before 1.13) to states, including this world's modded ids. */
-    private val legacy = info.forge?.legacyMapping() ?: LegacyMapping.VANILLA
+    internal val legacy = info.forge?.legacyMapping() ?: LegacyMapping.VANILLA
 
     /** Region files stay open while the world is open; reads on them are thread-safe. */
     private val regions = ConcurrentHashMap<ChunkPos, RegionFile>()

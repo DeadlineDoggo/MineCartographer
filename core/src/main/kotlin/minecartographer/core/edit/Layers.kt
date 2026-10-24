@@ -4,8 +4,31 @@ import minecartographer.core.ChunkBounds
 import minecartographer.core.ChunkPos
 import minecartographer.core.WorldSource
 
-/** A chunk inside an original, unmodified world. */
-data class ChunkRef(val world: WorldSource, val pos: ChunkPos)
+/**
+ * A chunk inside an original, unmodified world, placed as it is or transformed:
+ * turned by [turns] quarter turns clockwise (seen from above), raised by [dy] blocks, and,
+ * when [dy] or [cut] is set, laid over the original world's chunk at its new place, which is
+ * kept below the transformed chunk's bottom and below [cut] (see [floor]).
+ */
+data class ChunkRef(
+    val world: WorldSource,
+    val pos: ChunkPos,
+    val turns: Int = 0,
+    val dy: Int = 0,
+    /** Lowest block height (where it is placed) taken from this chunk; the original world stays below. */
+    val cut: Int? = null,
+) {
+    val transformed: Boolean get() = turns != 0 || dy != 0 || cut != null
+
+    /** True when the original chunk underneath shows through below [floor]. */
+    val layered: Boolean get() = dy != 0 || cut != null
+
+    /** Lowest height this chunk provides where it is placed; null when it replaces the whole chunk. */
+    val floor: Int? get() = if (!layered) null else maxOf(cut ?: Int.MIN_VALUE, world.minY + dy)
+
+    /** The plain chunk, without any transform. */
+    val plain: ChunkRef get() = if (transformed) ChunkRef(world, pos) else this
+}
 
 /** Override of one chunk in the [BaseLayer]. */
 sealed interface ChunkEdit {
@@ -24,6 +47,12 @@ sealed interface Layer {
 
     /** ARGB tag color shown in the layers panel and used to tint the layer's chunks. */
     val color: Int
+
+    /**
+     * Blocks of this layer's chunks the target world doesn't have, mapped by the user: source key (see
+     * `Conversion.keyOf`) -> block to use instead. Blocks without an entry are mapped automatically.
+     */
+    val blockMap: Map<String, String>
 }
 
 /**
@@ -36,6 +65,7 @@ data class BaseLayer(
     val overrides: Map<ChunkPos, ChunkEdit> = emptyMap(),
     override val visible: Boolean = true,
     override val locked: Boolean = false,
+    override val blockMap: Map<String, String> = emptyMap(),
 ) : Layer {
     override val id: Long get() = BASE_ID
     override val name: String get() = "Original world"
@@ -77,6 +107,7 @@ data class ChunkLayer(
     override val visible: Boolean = true,
     override val locked: Boolean = false,
     override val color: Int,
+    override val blockMap: Map<String, String> = emptyMap(),
 ) : Layer
 
 /**
@@ -214,8 +245,8 @@ data class LayerStack(
         if (i <= 0) return this
         val upper = layers[i] as ChunkLayer
         val merged = when (val lower = layers[i - 1]) {
-            is ChunkLayer -> lower.copy(chunks = lower.chunks + upper.chunks)
-            is BaseLayer -> lower.withOverrides(upper.chunks.mapValues { ChunkEdit.Place(it.value) })
+            is ChunkLayer -> lower.copy(chunks = lower.chunks + upper.chunks, blockMap = lower.blockMap + upper.blockMap)
+            is BaseLayer -> lower.withOverrides(upper.chunks.mapValues { ChunkEdit.Place(it.value) }).copy(blockMap = lower.blockMap + upper.blockMap)
         }
         val next = layers.toMutableList().apply {
             removeAt(i)
@@ -228,7 +259,9 @@ data class LayerStack(
     fun flatten(): LayerStack {
         var b = base.copy(visible = true)
         for (layer in layers.drop(1)) {
-            if (layer is ChunkLayer && layer.visible) b = b.withOverrides(layer.chunks.mapValues { ChunkEdit.Place(it.value) })
+            if (layer is ChunkLayer && layer.visible) {
+                b = b.withOverrides(layer.chunks.mapValues { ChunkEdit.Place(it.value) }).copy(blockMap = b.blockMap + layer.blockMap)
+            }
         }
         return copy(layers = listOf(b), activeId = BaseLayer.BASE_ID)
     }
@@ -248,6 +281,24 @@ data class LayerStack(
     fun offset(id: Long, dx: Int, dz: Int): LayerStack = update(id) { layer ->
         if (layer !is ChunkLayer || (dx == 0 && dz == 0)) layer
         else layer.copy(chunks = layer.chunks.mapKeys { (pos, _) -> ChunkPos(pos.x + dx, pos.z + dz) })
+    }
+
+    /** Maps a block of the layer's chunks to [target] for the target world, or back to automatic for null. */
+    fun mapBlock(id: Long, key: String, target: String?): LayerStack = update(id) { layer ->
+        val map = if (target == null) layer.blockMap - key else layer.blockMap + (key to target)
+        when (layer) { is BaseLayer -> layer.copy(blockMap = map); is ChunkLayer -> layer.copy(blockMap = map) }
+    }
+
+    /**
+     * Replaces the chunks of a chunk layer at [positions] with what [change] makes of each: a new position and
+     * reference (turning moves chunks too). Moved chunks win over ones already where they land.
+     */
+    fun reshape(id: Long, positions: Collection<ChunkPos>, change: (ChunkPos, ChunkRef) -> Pair<ChunkPos, ChunkRef>): LayerStack = update(id) { layer ->
+        if (layer !is ChunkLayer) layer else {
+            val moving = positions.mapNotNull { pos -> layer.chunks[pos]?.let { pos to it } }
+            val rest = layer.chunks - moving.mapTo(HashSet()) { it.first }
+            layer.copy(chunks = rest + moving.map { (pos, ref) -> change(pos, ref) })
+        }
     }
 
     companion object {

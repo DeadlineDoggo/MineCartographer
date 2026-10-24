@@ -27,7 +27,9 @@ import androidx.compose.ui.input.pointer.isShiftPressed
 import androidx.compose.ui.input.pointer.isTertiaryPressed
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import minecartographer.core.ChunkPos
@@ -151,6 +153,9 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
     val tints = remember { HashMap<Color, SkColorFilter>() }
     val prefetch = remember { PrefetchTracker() }
     var drag by remember { mutableStateOf(Drag.None) }
+    // Where the map sits in the window, to tell whether the pointer is on a control laid over it.
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    fun onControl(p: Offset) = state.mapBlockers.values.any { it.contains(p + origin) }
 
     fun pick(p: Offset): ChunkPos? {
         for (i in drawn.indices.reversed()) {
@@ -210,6 +215,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
         modifier
             .clipToBounds()
             .onSizeChanged { state.viewportSize = it }
+            .onGloballyPositioned { origin = it.positionInRoot() }
             .pointerHoverIcon(cursor)
             .pointerInput(Unit) {
                 var last = Offset.Zero
@@ -224,12 +230,14 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                         val h = size.height.toFloat()
                         val mods = event.keyboardModifiers
                         when (event.type) {
-                            PointerEventType.Scroll -> {
+                            PointerEventType.Scroll -> if (!onControl(p)) {
                                 val factor = 1.2.pow(-change.scrollDelta.y.toDouble())
                                 state.view = state.view.zoomedAt(factor, p.x, p.y, w, h)
                                 change.consume()
                             }
-                            PointerEventType.Press -> {
+                            PointerEventType.Press -> if (onControl(p)) {
+                                drag = Drag.None
+                            } else {
                                 last = p
                                 val b = event.buttons
                                 // Shift adds and Ctrl subtracts with either selection tool, like GIMP.
@@ -290,7 +298,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                                     Drag.None -> {}
                                 }
                                 last = p
-                                val hit = pick(p)
+                                val hit = if (drag == Drag.None && onControl(p)) null else pick(p)
                                 state.hovered = hit
                                 if (state.pasteMode) state.pasteAnchor = hit ?: pickGround(p, w, h)
                             }
@@ -363,9 +371,10 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                 val erased = shown == null && layerColors && stack.base.visible && stack.base.isErased(pos)
                 val ref = shown ?: (if (erased) ChunkRef(stack.world, pos) else null) ?: continue
 
-                val tile = state.tiles.request(ref.world, ref.pos, lod, rotation, view.distanceSq(viewPos, hs))
+                val (drawWorld, drawPos) = state.drawSource(ref, pos, stack, layer?.blockMap.orEmpty())
+                val tile = state.tiles.request(drawWorld, drawPos, lod, rotation, view.distanceSq(viewPos, hs))
                 if (tile == null) {
-                    if (!erased && !state.tiles.isBlank(ref.world.id, ref.pos)) {
+                    if (!erased && !state.tiles.isBlank(drawWorld.id, drawPos)) {
                         complete = false
                         if (visible) {
                             tilesTotal++
@@ -468,8 +477,9 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
             for (key in order) {
                 if (chunks.size == PREFETCH_LIMIT) break
                 val pos = Rotation.chunk(unrotate, around[(key and 0xFFFFFFFFL).toInt()])
-                val ref = stack.layerAt(pos)?.let { stack.contentOf(it, pos) } ?: continue
-                chunks += ref.world to ref.pos
+                val shownBy = stack.layerAt(pos) ?: continue
+                val ref = stack.contentOf(shownBy, pos) ?: continue
+                chunks += state.drawSource(ref, pos, stack, shownBy.blockMap)
             }
             state.tiles.prefetch(chunks)
         }

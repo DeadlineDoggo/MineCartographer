@@ -80,14 +80,14 @@ fun BoxScope.ModsDrawer(state: EditorState) {
     if (!state.hasMods(world)) return
     if (!state.modsPanelVisible) {
         Box(
-            Modifier.align(Alignment.TopStart).padding(top = 52.dp).clip(RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp))
+            Modifier.align(Alignment.TopStart).padding(top = 52.dp).overMap(state).clip(RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp))
                 .background(EditorTheme.panelRaised).border(1.dp, EditorTheme.border, RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp))
                 .clickable { state.modsPanelVisible = true }.padding(horizontal = 10.dp, vertical = 8.dp),
         ) { Txt("▸ Mods & textures", size = 12.sp) }
         return
     }
     Row(
-        Modifier.align(Alignment.TopStart).fillMaxHeight()
+        Modifier.align(Alignment.TopStart).fillMaxHeight().overMap(state)
             // Clicks and drags on the panel must not reach the map underneath.
             .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } } },
     ) {

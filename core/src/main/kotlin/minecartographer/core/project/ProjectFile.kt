@@ -113,19 +113,20 @@ class ProjectDocument internal constructor(
                     return null
                 }
                 val pos = e.pos()
-                return ChunkRef(from, ChunkPos(e.int("from-x") ?: pos.x, e.int("from-z") ?: pos.z))
+                return ChunkRef(from, ChunkPos(e.int("from-x") ?: pos.x, e.int("from-z") ?: pos.z),
+                    turns = e.int("turns") ?: 0, dy = e.int("dy") ?: 0, cut = e.int("cut"))
             }
             val layers = ArrayList<Layer>()
             val base = s.children("base").firstOrNull()
             val overrides = HashMap<ChunkPos, ChunkEdit>()
             base?.children()?.forEach { e ->
-                val pos = e.pos()
                 when (e.tagName) {
-                    "erase" -> overrides[pos] = ChunkEdit.Delete
-                    "place" -> ref(e)?.let { overrides[pos] = ChunkEdit.Place(it) }
+                    "erase" -> overrides[e.pos()] = ChunkEdit.Delete
+                    "place" -> ref(e)?.let { overrides[e.pos()] = ChunkEdit.Place(it) }
                 }
             }
-            layers += BaseLayer(world, overrides, visible = base?.bool("visible") ?: true, locked = base?.bool("locked") ?: false)
+            fun blockMap(e: Element?) = e?.children("map")?.associate { it.getAttribute("block") to it.getAttribute("to") }.orEmpty()
+            layers += BaseLayer(world, overrides, visible = base?.bool("visible") ?: true, locked = base?.bool("locked") ?: false, blockMap = blockMap(base))
             for (l in s.children("layer")) {
                 val chunks = HashMap<ChunkPos, ChunkRef>()
                 for (c in l.children("chunk")) ref(c)?.let { chunks[c.pos()] = it }
@@ -134,6 +135,7 @@ class ProjectDocument internal constructor(
                     id, l.getAttribute("name").ifBlank { "Layer $id" }, chunks,
                     visible = l.bool("visible") ?: true, locked = l.bool("locked") ?: false,
                     color = l.getAttribute("color").removePrefix("#").toLongOrNull(16)?.toInt() ?: LayerStack.LAYER_COLORS[0],
+                    blockMap = blockMap(l),
                 )
             }
             val active = s.long("active")?.takeIf { id -> layers.any { it.id == id } } ?: BaseLayer.BASE_ID
@@ -189,6 +191,12 @@ object ProjectFile {
             s.setAttribute("world", ids.getValue(stack.world))
             s.setAttribute("active", stack.activeId.toString())
             s.setAttribute("next-id", stack.nextId.toString())
+            fun Element.addBlockMap(map: Map<String, String>) {
+                for ((block, to) in map.entries.sortedBy { it.key }) add(doc, "map").apply {
+                    setAttribute("block", block)
+                    setAttribute("to", to)
+                }
+            }
             fun Element.ref(pos: ChunkPos, ref: ChunkRef) {
                 setPos(pos)
                 if (ref.world != stack.world) ids[ref.world]?.let { setAttribute("world", it) }
@@ -196,6 +204,9 @@ object ProjectFile {
                     setAttribute("from-x", ref.pos.x.toString())
                     setAttribute("from-z", ref.pos.z.toString())
                 }
+                if (ref.turns != 0) setAttribute("turns", ref.turns.toString())
+                if (ref.dy != 0) setAttribute("dy", ref.dy.toString())
+                ref.cut?.let { setAttribute("cut", it.toString()) }
             }
             for (layer in stack.layers) {
                 when (layer) {
@@ -207,6 +218,7 @@ object ProjectFile {
                             ChunkEdit.Delete -> b.add(doc, "erase").setPos(pos)
                             is ChunkEdit.Place -> b.add(doc, "place").ref(pos, edit.source)
                         }
+                        b.addBlockMap(layer.blockMap)
                     }
                     is ChunkLayer -> {
                         val l = s.add(doc, "layer")
@@ -216,6 +228,7 @@ object ProjectFile {
                         l.setAttribute("locked", layer.locked.toString())
                         l.setAttribute("color", "#%08X".format(layer.color))
                         for ((pos, ref) in layer.chunks.entries.sortedWith(compareBy({ it.key.z }, { it.key.x }))) l.add(doc, "chunk").ref(pos, ref)
+                        l.addBlockMap(layer.blockMap)
                     }
                 }
             }

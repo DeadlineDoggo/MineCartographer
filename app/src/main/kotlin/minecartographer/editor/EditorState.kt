@@ -25,10 +25,17 @@ import java.nio.file.Path
 import kotlin.math.sqrt
 import minecartographer.core.edit.BaseLayer
 import minecartographer.core.edit.ChunkClipboard
+import minecartographer.core.edit.ChunkEdit
 import minecartographer.core.edit.ChunkLayer
+import minecartographer.core.edit.ChunkRef
 import minecartographer.core.edit.Layer
 import minecartographer.core.DemoWorld
 import minecartographer.core.edit.LayerStack
+import minecartographer.core.anvil.ChunkTransform
+import minecartographer.core.anvil.TransformedChunk
+import minecartographer.core.convert.Conversion
+import minecartographer.core.convert.MinecraftTables
+import minecartographer.core.convert.Upgrade
 import minecartographer.core.edit.UndoHistory
 import minecartographer.core.project.ProjectDocument
 import minecartographer.core.project.ProjectFile
@@ -594,6 +601,9 @@ class EditorState {
         markSaved()
     }
 
+    /** Controls laid over the map, in root coordinates (see `overMap`); the map ignores the pointer on them. */
+    val mapBlockers = HashMap<Any, androidx.compose.ui.geometry.Rect>()
+
     /** The shortcuts and tips card over the map. */
     var helpVisible by mutableStateOf(false)
 
@@ -969,6 +979,138 @@ class EditorState {
     fun moveLayerBy(dx: Int, dz: Int) {
         val id = activeStack?.activeId ?: return
         strokeFromStart { it.offset(id, dx, dz) }
+    }
+
+    // ---- Turning, raising and cutting pasted chunks ----
+
+    private data class ViewKey(val ref: ChunkRef, val pos: ChunkPos, val under: WorldSource?, val conversion: Conversion?)
+    private val transformedViews = HashMap<ViewKey, TransformedChunk>()
+
+    /**
+     * What to draw for [ref] shown at [pos] by a layer with [blockMap]: its own world and position, or a view of
+     * the chunk as it will be exported, for chunks turned, raised or cut (over the original world's chunk there,
+     * unless erased) or with blocks the world they go into doesn't have.
+     */
+    fun drawSource(ref: ChunkRef, pos: ChunkPos, stack: LayerStack, blockMap: Map<String, String> = emptyMap()): Pair<WorldSource, ChunkPos> {
+        if (!ChunkTransform.supports(ref.world)) return ref.world to ref.pos
+        val conversion = conversionFor(ref.world, stack, blockMap)
+        if (!ref.transformed && conversion?.remaps != true) return ref.world to ref.pos
+        val under = (stack.world as? AnvilWorld)?.takeIf { ref.layered && !stack.base.isErased(pos) }
+        val view = transformedViews.getOrPut(ViewKey(ref, pos, under, conversion)) { TransformedChunk(ref, pos, under, conversion) }
+        return view to ref.pos
+    }
+
+    // ---- Block mapping between worlds ----
+
+    private val conversions = java.util.concurrent.ConcurrentHashMap<Triple<WorldSource, WorldSource, Map<String, String>>, Conversion>()
+
+    /** How chunks of [source] become chunks of [stack]'s world with [blockMap]; null for its own chunks and demo worlds. */
+    fun conversionFor(source: WorldSource, stack: LayerStack, blockMap: Map<String, String> = emptyMap()): Conversion? {
+        val base = stack.world as? AnvilWorld ?: return null
+        val world = source as? AnvilWorld ?: return null
+        if (world == base) return null
+        return conversions.getOrPut(Triple(world, base, blockMap)) { Conversion(world, base, blockMap) }
+    }
+
+    /** The layer whose block mapping panel is open; null when it is closed. */
+    var blockMapLayer by mutableStateOf<Long?>(null)
+
+    /** The worlds a layer's chunks come from. */
+    fun sourceWorldsOf(layer: Layer): Set<WorldSource> = when (layer) {
+        is ChunkLayer -> layer.chunks.values.mapTo(HashSet()) { it.world }
+        is BaseLayer -> layer.overrides.values.mapNotNullTo(HashSet()) { (it as? ChunkEdit.Place)?.source?.world }
+    }
+
+    /** True when some of the layer's chunks come from a world with blocks [stack]'s world doesn't have. */
+    fun needsBlockMap(layer: Layer, stack: LayerStack): Boolean =
+        sourceWorldsOf(layer).any { conversionFor(it, stack)?.remaps == true }
+
+    /** Maps a block of [layerId]'s chunks to [target] (`minecraft:oak_planks`), or back to automatic for null. */
+    fun mapBlock(layerId: Long, key: String, target: String?) {
+        commit(if (target == null) "Automatic block mapping" else "Map block") { it.mapBlock(layerId, key, target) }
+    }
+
+    /** Reads the tables Minecraft upgrades old worlds with from the newest installed jar, then redraws converted chunks. */
+    fun loadUpgradeTables() {
+        scope.launch(Dispatchers.IO) {
+            val tables = TextureFiles.findClientJar()?.let { MinecraftTables.read(it) } ?: return@launch
+            Upgrade.tables = tables
+            withContext(Dispatchers.Main) {
+                transformedViews.clear()
+                tiles.reloadWorlds(worlds.mapTo(HashSet()) { it.id })
+            }
+        }
+    }
+
+    /** The chunks turning, raising and cutting act on: the selection in the active pasted layer, or all of it. */
+    fun transformTargets(): Map<ChunkPos, ChunkRef> {
+        val layer = activeStack?.active as? ChunkLayer ?: return emptyMap()
+        val selected = layer.chunks.filterKeys { it in selection }
+        return selected.ifEmpty { layer.chunks }
+    }
+
+    /** [transformTargets] if they may be changed this way, otherwise null after telling the user why. */
+    private fun checkedTargets(layered: Boolean): Pair<ChunkLayer, Map<ChunkPos, ChunkRef>>? {
+        val layer = editableLayer() ?: return null
+        if (layer !is ChunkLayer) {
+            notify("Turning, raising and cutting work on pasted layers: copy the chunks and paste them as a layer first.", warning = true)
+            return null
+        }
+        val targets = transformTargets()
+        if (targets.isEmpty()) return null
+        val base = activeStack!!.world
+        targets.values.firstOrNull { !ChunkTransform.supports(it.world) }?.let {
+            notify("\"${it.world.name}\" is a demo world; its chunks can't be turned, raised or cut.", warning = true)
+            return null
+        }
+        if (layered) targets.values.firstOrNull { (it.world.dataVersion ?: 0) > (base.dataVersion ?: 0) }?.let {
+            notify("Chunks of ${it.world.versionLabel} can't be laid over \"${base.name}\" (${base.versionLabel}): worlds only upgrade, never downgrade.", warning = true)
+            return null
+        }
+        return layer to targets
+    }
+
+    /** Turns the chunks by [turns] quarter turns clockwise (seen from above) around the middle of their area. */
+    fun turnChunks(turns: Int) {
+        val (layer, targets) = checkedTargets(layered = false) ?: return
+        val t = Rotation.normalize(turns)
+        if (t == 0) return
+        val pivot = ChunkPos(
+            Math.floorDiv(targets.keys.minOf { it.x } + targets.keys.maxOf { it.x }, 2),
+            Math.floorDiv(targets.keys.minOf { it.z } + targets.keys.maxOf { it.z }, 2),
+        )
+        fun turned(pos: ChunkPos): ChunkPos {
+            val r = Rotation.chunk(t, ChunkPos(pos.x - pivot.x, pos.z - pivot.z))
+            return ChunkPos(pivot.x + r.x, pivot.z + r.z)
+        }
+        val wasSelected = targets.keys.filterTo(HashSet()) { it in selection }
+        if (commit("Turn chunks") { it.reshape(layer.id, targets.keys) { pos, ref -> turned(pos) to ref.copy(turns = Rotation.normalize(ref.turns + t)) } }) {
+            selection = selection - wasSelected + wasSelected.map(::turned)
+        }
+    }
+
+    /** Moves the chunks [delta] blocks up (or down); the original world shows below them. */
+    fun raiseChunks(delta: Int) {
+        val (layer, targets) = checkedTargets(layered = true) ?: return
+        val world = activeStack!!.world
+        val limit = world.maxY - world.minY
+        commit(if (delta > 0) "Raise chunks" else "Lower chunks") {
+            it.reshape(layer.id, targets.keys) { pos, ref -> pos to ref.copy(dy = (ref.dy + delta).coerceIn(-limit, limit)) }
+        }
+    }
+
+    /** Keeps the original world below height [y] under the chunks; null takes the chunks down to their bottom again. */
+    fun cutChunks(y: Int?) {
+        val (layer, targets) = checkedTargets(layered = y != null) ?: return
+        commit(if (y == null) "Remove cut" else "Cut chunks at $y") {
+            it.reshape(layer.id, targets.keys) { pos, ref -> pos to ref.copy(cut = y) }
+        }
+    }
+
+    /** Undoes turning, raising and cutting of the chunks (they stay where they are). */
+    fun resetChunkTransforms() {
+        val (layer, targets) = checkedTargets(layered = false) ?: return
+        commit("Reset chunks") { it.reshape(layer.id, targets.keys) { pos, ref -> pos to ref.plain } }
     }
 
     fun pickLayerAt(pos: ChunkPos) {

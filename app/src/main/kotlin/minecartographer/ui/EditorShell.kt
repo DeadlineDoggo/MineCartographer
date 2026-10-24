@@ -93,6 +93,7 @@ private fun EditorLayout(state: EditorState, onExit: () -> Unit) {
                 ChunkViewport(state, Modifier.fillMaxSize())
                 ViewportOverlay(state)
                 ModsDrawer(state)
+                BlockMappingDrawer(state)
                 HelpOverlay(state)
             }
             if (state.rightDockVisible) {
@@ -176,6 +177,10 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             MenuSeparator,
             MenuItem("Raise layer", "PgUp", stack != null && !isBase) { state.raiseLayer() },
             MenuItem("Lower layer", "PgDn", stack != null && !isBase) { state.lowerLayer() },
+            MenuSeparator,
+            MenuItem("Block mapping…", enabled = stack != null && active != null && state.needsBlockMap(active, stack)) {
+                state.blockMapLayer = active?.id
+            },
             MenuSeparator,
             MenuItem("Merge down", "Ctrl+E", stack != null && active != null && stack.canMergeDown(active.id)) { state.mergeDown() },
             MenuItem("Flatten world", "Ctrl+Shift+E", (stack?.layers?.size ?: 0) > 1) { state.flatten() },
@@ -346,28 +351,31 @@ private fun BoxScope.ViewportOverlay(state: EditorState) {
         LoadingLayer(state, visible = !state.startingUp && state.loading != null, fullWindow = false)
         return
     }
-    Compass(state.rotation, Modifier.align(Alignment.TopEnd).padding(12.dp).size(64.dp))
-    RoundButton(Icons.RotateLeft, "Rotate view left (,)", Modifier.align(Alignment.CenterStart).padding(start = 12.dp)) { state.rotate(-1) }
-    RoundButton(Icons.RotateRight, "Rotate view right (.)", Modifier.align(Alignment.CenterEnd).padding(end = 12.dp)) { state.rotate(+1) }
+    Compass(state.rotation, Modifier.align(Alignment.TopEnd).padding(12.dp).size(64.dp).overMap(state))
+    RoundButton(Icons.RotateLeft, "Rotate view left (,)", Modifier.align(Alignment.CenterStart).padding(start = 12.dp).overMap(state)) { state.rotate(-1) }
+    RoundButton(Icons.RotateRight, "Rotate view right (.)", Modifier.align(Alignment.CenterEnd).padding(end = 12.dp).overMap(state)) { state.rotate(+1) }
     RenderModeSwitcher(state, Modifier.align(Alignment.BottomStart).padding(12.dp))
     LoadingLayer(state, visible = !state.startingUp && state.loading != null, fullWindow = false)
     val clip = state.clipboard
     if (state.pasteMode && clip != null) {
         Txt(
             "Placing ${clip.size} chunks as a new layer. Click to place, Shift+click to keep placing, Esc to cancel.",
-            Modifier.align(Alignment.TopCenter).padding(12.dp).clip(RoundedCornerShape(4.dp))
+            Modifier.align(Alignment.TopCenter).padding(12.dp).overMap(state).clip(RoundedCornerShape(4.dp))
                 .background(EditorTheme.paste).padding(horizontal = 10.dp, vertical = 5.dp),
             color = Color(0xFF0E2A1E), size = 12.sp, weight = FontWeight.SemiBold,
         )
     } else if (state.selection.isNotEmpty()) {
         Txt(
             "${state.selection.size} chunks selected",
-            Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(4.dp))
+            Modifier.align(Alignment.TopStart).padding(12.dp).overMap(state).clip(RoundedCornerShape(4.dp))
                 .background(EditorTheme.accent).padding(horizontal = 8.dp, vertical = 4.dp),
             color = Color.White, size = 12.sp, weight = FontWeight.SemiBold,
         )
     }
-    NoticeToast(state, Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp))
+    SelectionToolbar(state, Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp))
+    // Above the selection toolbar while it is shown.
+    val toolbar = state.selection.isNotEmpty() && !state.pasteMode
+    NoticeToast(state, Modifier.align(Alignment.BottomCenter).padding(bottom = if (toolbar) 70.dp else 18.dp))
 }
 
 @Composable
@@ -378,7 +386,7 @@ private fun NoticeToast(state: EditorState, modifier: Modifier) {
         if (state.notice == notice) state.notice = null
     }
     Row(
-        modifier.clip(RoundedCornerShape(6.dp)).background(EditorTheme.panelRaised)
+        modifier.overMap(state).clip(RoundedCornerShape(6.dp)).background(EditorTheme.panelRaised)
             .border(1.dp, if (notice.warning) EditorTheme.warning else EditorTheme.border, RoundedCornerShape(6.dp))
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -208,6 +208,8 @@ fun SelectionPanel(state: EditorState) {
         Txt("Copy, Cut and Clear act on the active layer. Copy visible takes what you see.",
             color = EditorTheme.textFaint, size = 11.sp, maxLines = 3)
 
+        TransformSection(state)
+
         SectionHeader("CLIPBOARD")
         val clip = state.clipboard
         if (clip == null) {
@@ -231,6 +233,52 @@ fun SelectionPanel(state: EditorState) {
             if (regions.size > 64) Txt("… ${regions.size - 64} more", color = EditorTheme.textFaint, size = 11.sp)
         }
     }
+}
+
+/** Turn, raise and cut the selected chunks of the active pasted layer (all of it when none are selected). */
+@Composable
+private fun TransformSection(state: EditorState) {
+    val targets = state.transformTargets()
+    if (targets.isEmpty()) return
+    val refs = targets.values
+    val selected = targets.keys.any { it in state.selection }
+    SectionHeader("TURN AND HEIGHT")
+    Txt(if (selected) "${targets.size} selected chunks of this layer" else "The whole layer (${targets.size} chunks)",
+        color = EditorTheme.textDim, size = 12.sp)
+    Spacer(Modifier.height(6.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        TextButton("Turn left", Modifier.weight(1f), icon = Icons.RotateLeft) { state.turnChunks(-1) }
+        TextButton("Turn right", Modifier.weight(1f), icon = Icons.RotateRight) { state.turnChunks(1) }
+    }
+    Spacer(Modifier.height(6.dp))
+    val dy = refs.map { it.dy }.distinct().singleOrNull()
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Txt("Height", Modifier.width(56.dp), color = EditorTheme.textDim, size = 12.sp)
+        TextButton("−10", Modifier.weight(1f)) { state.raiseChunks(-10) }
+        TextButton("−1", Modifier.weight(1f)) { state.raiseChunks(-1) }
+        Txt(dy?.let { if (it > 0) "+$it" else "$it" } ?: "mixed", Modifier.width(44.dp), size = 12.sp, mono = true)
+        TextButton("+1", Modifier.weight(1f)) { state.raiseChunks(1) }
+        TextButton("+10", Modifier.weight(1f)) { state.raiseChunks(10) }
+    }
+    Spacer(Modifier.height(6.dp))
+    val cut = refs.map { it.cut }.distinct()
+    val oneCut = cut.singleOrNull()
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Txt("Cut at", Modifier.width(56.dp), color = EditorTheme.textDim, size = 12.sp)
+        if (cut.size == 1 && oneCut == null) {
+            TextButton("Keep original below…", Modifier.weight(1f)) { state.cutChunks(EditorState.SURFACE_Y.toInt()) }
+        } else {
+            TextButton("−1", Modifier.weight(1f), enabled = oneCut != null) { oneCut?.let { state.cutChunks(it - 1) } }
+            Txt(oneCut?.let { "Y $it" } ?: "mixed", Modifier.width(56.dp), size = 12.sp, mono = true)
+            TextButton("+1", Modifier.weight(1f), enabled = oneCut != null) { oneCut?.let { state.cutChunks(it + 1) } }
+            TextButton("Off", Modifier.weight(1f)) { state.cutChunks(null) }
+        }
+    }
+    Spacer(Modifier.height(6.dp))
+    TextButton("Reset turn and height", Modifier.fillMaxWidth(), enabled = refs.any { it.transformed }) { state.resetChunkTransforms() }
+    Spacer(Modifier.height(4.dp))
+    Txt("Raised or cut chunks keep the original world below them: under their bottom and under the cut.",
+        color = EditorTheme.textFaint, size = 11.sp, maxLines = 4)
 }
 
 /**

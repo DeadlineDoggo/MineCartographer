@@ -214,6 +214,14 @@ object Icons {
 
     val Close = EditorIcon { color -> line(color, 0.25f, 0.25f, 0.75f, 0.75f); line(color, 0.75f, 0.25f, 0.25f, 0.75f) }
 
+    /** Two opposite arrows: blocks of one world mapped to another's. */
+    val Mapping = EditorIcon { color ->
+        line(color, 0.12f, 0.34f, 0.84f, 0.34f)
+        drawPath(poly(0.88f, 0.34f, 0.66f, 0.18f, 0.66f, 0.5f), color)
+        line(color, 0.88f, 0.68f, 0.16f, 0.68f)
+        drawPath(poly(0.12f, 0.68f, 0.34f, 0.52f, 0.34f, 0.84f), color)
+    }
+
     val Folder = EditorIcon { color ->
         drawPath(poly(0.08f, 0.2f, 0.4f, 0.2f, 0.5f, 0.32f, 0.92f, 0.32f, 0.92f, 0.82f, 0.08f, 0.82f), color, style = stroke())
     }

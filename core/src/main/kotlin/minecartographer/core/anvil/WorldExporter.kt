@@ -1,6 +1,8 @@
 package minecartographer.core.anvil
 
 import minecartographer.core.ChunkPos
+import minecartographer.core.convert.Conversion
+import minecartographer.core.convert.Upgrade
 import minecartographer.core.edit.LayerStack
 import minecartographer.core.nbt.CompoundTag
 import minecartographer.core.nbt.DoubleTag
@@ -47,17 +49,33 @@ object WorldExporter {
         sources.filterIsInstance<AnvilWorld>().filter { (it.dataVersion ?: 0) > target }.forEach {
             problems += "\"${it.name}\" (${it.versionLabel}) is newer than \"${base.name}\" (${base.versionLabel}); Minecraft can only upgrade chunks, not downgrade them."
         }
-        // Before 1.13 chunks store bare numbers, and Forge numbers modded blocks per world: copied as they are,
-        // they would turn into whatever the base world calls those numbers.
-        val baseIds = base.info.forge?.takeIf { it.numericIds }?.blockNames.orEmpty()
-        sources.filterIsInstance<AnvilWorld>().filter { it != base }.forEach { source ->
-            val ids = source.info.forge?.takeIf { it.numericIds }?.blockNames.orEmpty()
-            if (ids != baseIds && (source.dataVersion ?: 0) < SurfaceExtractor.DV_FLATTENING) {
-                problems += "\"${source.name}\" numbers its modded blocks differently from \"${base.name}\"; " +
-                    "its chunks would change into other blocks. Only worlds of the same modpack can be merged before 1.13."
+        // Modded blocks the base world doesn't have are mapped to others, and chunks laid over the original world
+        // are upgraded to its version (see Conversion), so worlds of any version and modpack can be merged.
+        return problems
+    }
+
+    /** Things the export will do to chunks of other worlds, worth knowing beforehand (not problems). */
+    fun notes(stack: LayerStack): List<String> {
+        val base = stack.world as? AnvilWorld ?: return emptyList()
+        val notes = ArrayList<String>()
+        for (world in sourceWorlds(stack).filterIsInstance<AnvilWorld>().filter { it != base }) {
+            if (Conversion(world, base).remaps) notes += "Modded blocks of \"${world.name}\" that \"${base.name}\" doesn't have become the blocks " +
+                "shown in the layer's block mapping."
+        }
+        val upgraded = placedRefs(stack).filter { it.layered && (it.world.dataVersion ?: 0) < (base.dataVersion ?: 0) }.map { it.world }.distinct()
+        for (world in upgraded) notes += "Raised or cut chunks of \"${world.name}\" (${world.versionLabel}) are converted to ${base.versionLabel} here" +
+            if (Upgrade.tables == null && (world.dataVersion ?: 0) < Upgrade.DV_FLATTENING) "; without a Minecraft 1.13+ jar only by how blocks look." else "."
+        return notes
+    }
+
+    /** Every chunk reference shown by a visible layer or placed in the base layer. */
+    private fun placedRefs(stack: LayerStack): List<minecartographer.core.edit.ChunkRef> = buildList {
+        stack.layers.forEach { layer ->
+            when (layer) {
+                is minecartographer.core.edit.ChunkLayer -> if (layer.visible) addAll(layer.chunks.values)
+                is minecartographer.core.edit.BaseLayer -> layer.overrides.values.forEach { if (it is minecartographer.core.edit.ChunkEdit.Place) add(it.source) }
             }
         }
-        return problems
     }
 
     private fun sourceWorlds(stack: LayerStack) = buildSet {
@@ -99,6 +117,7 @@ object WorldExporter {
         stack.base.overrides.keys.forEach { positions += it }
         val byRegion = positions.groupBy { it.regionX to it.regionZ }
 
+        val conversions = HashMap<Pair<AnvilWorld, Map<String, String>>, Conversion>()
         var done = 0
         var unchanged = 0
         var relocated = 0
@@ -109,6 +128,23 @@ object WorldExporter {
             for (pos in chunks) {
                 val ref = stack.resolve(pos) ?: continue
                 val source = ref.world as AnvilWorld
+                val layer = stack.layerAt(pos)
+                val conversion = if (source == base) null else conversions.getOrPut(source to layer?.blockMap.orEmpty()) {
+                    Conversion(source, base, layer?.blockMap.orEmpty())
+                }
+                if (ref.transformed || conversion?.remaps == true) {
+                    // The original chunk here shows below a raised or cut one, unless it was erased.
+                    val under = base.takeIf { !stack.base.isErased(pos) }
+                    val built = ChunkTransform.build(ref, pos, under, conversion)
+                    if (built == null) {
+                        warnings += "Chunk ${ref.pos} of ${source.name} could not be read"
+                        continue
+                    }
+                    blockData[pos] = RawChunk.of(built.first)
+                    built.second?.let { entityData[pos] = RawChunk.of(it) }
+                    relocated++
+                    continue
+                }
                 val raw = source.readChunk(ref.pos)
                 if (raw == null) {
                     warnings += "Chunk ${ref.pos} of ${source.name} could not be read"

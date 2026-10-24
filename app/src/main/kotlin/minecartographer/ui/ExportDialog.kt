@@ -90,6 +90,7 @@ fun ExportDialog(state: EditorState) {
                 SectionHeader("GOOD TO KNOW")
                 val notes = buildList {
                     if (older.isNotEmpty()) add("Chunks from ${older.joinToString { it.versionLabel }} keep their own version. Minecraft ${base.versionLabel} upgrades them the first time the merged world is opened.")
+                    addAll(minecartographer.core.anvil.WorldExporter.notes(stack))
                     if (erased > 0) add("Erased chunks are left out, so Minecraft generates fresh terrain there when you visit.")
                     add("Moved chunks get their lighting recalculated, and structure references (villages, strongholds…) are removed from them.")
                     add("Only the overworld is merged; the Nether, the End, player data and maps come from \"${base.name}\".")

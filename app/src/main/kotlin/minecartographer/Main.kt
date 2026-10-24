@@ -29,6 +29,7 @@ fun main(args: Array<String>) = application {
         EditorState().apply {
             // Nothing opens by itself: the start screen offers the ways in (a path on the command line skips it).
             skipLoading()
+            loadUpgradeTables()
             startScreenVisible = args.isEmpty()
         }
     }

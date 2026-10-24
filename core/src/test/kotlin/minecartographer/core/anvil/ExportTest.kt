@@ -18,17 +18,27 @@ class ExportTest {
     private fun ChunkPos.far() = ChunkPos(x + 5000, z - 5000) // outside anything a test world has generated
 
     @Test
-    fun `chunks of a Forge world before 1_13 can't be merged into a world that numbers blocks differently`() {
+    fun `chunks of a Forge world before 1_13 merge into a world that numbers blocks differently, mapped`(@TempDir tmp: Path) {
         val forgeInfo = TestWorlds.requireForge().first()
         val baseInfo = TestWorlds.require().last().takeIf { it.forge?.numericIds != true }
         assumeTrue(baseInfo != null, "Needs a base world without numeric modded ids")
         val base = AnvilWorld.open(baseInfo!!.folder)
         val modded = AnvilWorld.open(forgeInfo.folder)
         try {
-            val pos = modded.chunks().first()
+            val pos = modded.chunks().first { modded.loadBlocks(it) != null }
             val stack = LayerStack.of(base).addLayer("pasted", mapOf(pos.far() to ChunkRef(modded, pos)))
-            val problems = WorldExporter.validate(stack)
-            assertTrue(problems.any { "numbers its modded blocks differently" in it }, problems.toString())
+            assertEquals(emptyList(), WorldExporter.validate(stack))
+            assertTrue(WorldExporter.notes(stack).any { "Modded blocks" in it })
+            val out = tmp.resolve("merged")
+            WorldExporter.export(stack, out, "Mapped test")
+            val merged = AnvilWorld.open(out)
+            try {
+                // Read with the base's numbering: no modded names left.
+                val blocks = SurfaceExtractor.extractBlocks(merged.readChunk(pos.far())!!.nbt(), pos.far(), merged.legacy)!!
+                assertTrue(blocks.palette.none { it.name.substringBefore(':') !in setOf("minecraft", "minecartographer") }, blocks.palette.toList().toString())
+            } finally {
+                merged.close()
+            }
         } finally {
             base.close()
             modded.close()
@@ -37,7 +47,7 @@ class ExportTest {
 
     @Test
     fun `older chunks pasted into a newer world keep their own version and move`(@TempDir tmp: Path) {
-        // Forge worlds before 1.13 can't be merged into other worlds (see the test above).
+        // Forge worlds before 1.13 have their modded blocks mapped (see the test above); here only vanilla ones.
         val (newInfo, oldInfo) = TestWorlds.newestAnd { (it.dataVersion ?: 0) < SurfaceExtractor.DV_FLATTENING && it.forge?.numericIds != true }
         val target = AnvilWorld.open(newInfo.folder)
         val old = AnvilWorld.open(oldInfo.folder)

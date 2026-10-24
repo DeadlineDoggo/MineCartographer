@@ -49,7 +49,7 @@ private val PANEL_BACKGROUND = Color(0xCC2B2D30)
  */
 @Composable
 fun RenderModeSwitcher(state: EditorState, modifier: Modifier) {
-    Row(modifier, verticalAlignment = Alignment.Bottom) {
+    Row(modifier.overMap(state), verticalAlignment = Alignment.Bottom) {
         FlatButton(state)
         Spacer(Modifier.width(8.dp))
         ModeSwitcher(state)
