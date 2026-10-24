@@ -1,6 +1,6 @@
 # MineCartographer
 
-> **Early alpha, v0.1.0.** It works on the worlds it has been tested with, but expect bugs and
+> **Early alpha, v0.1.5.** It works on the worlds it has been tested with, but expect bugs and
 > rough edges, and things may change between versions. Back up your worlds and check an exported
 > world in Minecraft before relying on it.
 
@@ -16,6 +16,7 @@ new world. Your original saves are only read, never modified.
   IDs (1.2–1.12), the palette formats (1.13–1.17) and the 1.18+ chunk layout.
 - **Isometric 2.5D view** of the terrain. Pan with the mouse or WASD, zoom with the wheel,
   rotate in 90° steps.
+- **Three render modes**, from fastest to most detailed: Map, Blocks and Textured (see below).
 - **Layers, like an image editor.** The original world is the bottom layer. Every paste becomes
   a new layer you can hide, lock, rename, reorder, merge down or flatten.
 - **Selection tools:** brush, rectangle, select all/none/invert, layer to selection.
@@ -24,6 +25,29 @@ new world. Your original saves are only read, never modified.
 - **Non-destructive edits** with full undo/redo. Erasing in the original world only hides
   chunks, and they can be restored.
 - **Export** writes a new world folder. Untouched chunks are copied byte for byte.
+
+## Render modes
+
+Switch modes with the button in the bottom-left corner of the view (hover it to see all three),
+from **View** in the menu, or with the `1`, `2` and `3` keys.
+
+**Map** draws only the top block of each column and extends it straight down to the ground, so
+a tree or a tower becomes a solid pillar. It's the fastest mode, good for finding your way
+around a large world.
+
+![Map mode](docs/render-map.png)
+
+**Blocks** draws every block you can see, in flat colors close to those on Minecraft's own maps,
+but without textures. Shapes come out right: trees have leaves and trunks, and you can see overhangs
+and the walls of buildings.
+
+![Blocks mode](docs/render-blocks.png)
+
+**Textured** uses Minecraft's own block models and textures. It reads them from the newest client
+jar it finds in the usual launcher folders. You can also choose a client jar or resource packs in
+the View tab. It's the slowest mode.
+
+![Textured mode](docs/render-textured.png)
 
 ## How merging different versions works
 
@@ -91,6 +115,7 @@ The installer ends up in `app/build/compose/binaries/`.
 | Mouse wheel, `+` / `-` | Zoom |
 | `,` / `.` | Rotate the view |
 | F | Fit the world on screen |
+| 1, 2, 3 | Map, Blocks, Textured render mode |
 | H, B, R, M, E, I | Move view, brush select, rectangle select, move layer, eraser, pick layer |
 | Shift / Ctrl while selecting | Add to / subtract from the selection |
 | Ctrl+A, Ctrl+Shift+A, Ctrl+I | Select all, none, invert |
