@@ -1,6 +1,6 @@
 # MineCartographer
 
-> **Early alpha, v0.1.5.** It works on the worlds it has been tested with, but expect bugs and
+> **Early alpha, v0.2.** It works on the worlds it has been tested with, but expect bugs and
 > rough edges, and things may change between versions. Back up your worlds and check an exported
 > world in Minecraft before relying on it.
 
@@ -24,6 +24,8 @@ new world. Your original saves are only read, never modified.
 - **Copy and paste between worlds**, at the cursor or at the original coordinates.
 - **Non-destructive edits** with full undo/redo. Erasing in the original world only hides
   chunks, and they can be restored.
+- **Projects** save the whole workspace (open worlds, layers, selection, camera and settings) to
+  a small XML file you can open again later.
 - **Export** writes a new world folder. Untouched chunks are copied byte for byte.
 
 ## Render modes
@@ -43,9 +45,11 @@ and the walls of buildings.
 
 ![Blocks mode](docs/render-blocks.png)
 
-**Textured** uses Minecraft's own block models and textures. It reads them from the newest client
-jar it finds in the usual launcher folders. You can also choose a client jar or resource packs in
-the View tab. It's the slowest mode.
+**Textured** uses Minecraft's own block models and textures, read from a client jar in the usual
+launcher folders. Each world uses the jar of its own version when it's installed (1.13 and newer),
+otherwise the newest one. In the View tab you can pick resource packs or a jar for each world, and
+a default for the rest. Chunks pasted from another world keep the textures of the world they come
+from. It's the slowest mode.
 
 ![Textured mode](docs/render-textured.png)
 
@@ -84,7 +88,7 @@ You need **JDK 25** to build and run from source. The Gradle wrapper is included
 ./gradlew :app:run
 ```
 
-You can also pass world folders to open at startup:
+You can also pass world folders, or a `.mcproj` project file, to open at startup:
 
 ```sh
 ./gradlew :app:run --args="'C:/Users/you/AppData/Roaming/.minecraft/saves/My World'"
@@ -107,6 +111,53 @@ The installer ends up in `app/build/compose/binaries/`.
    become a new layer.
 4. Arrange the layers, then **File → Export merged world…** (Ctrl+Shift+S).
 
+### Projects
+
+**File → Save project** (Ctrl+S) stores the current workspace in a `.mcproj` file: which worlds
+are open, every layer with its chunks, each world's textures, the selection, the camera, the render
+mode and the dock layout. **File → Open project…** (Ctrl+Shift+O) brings all of it back, and
+**File → Recent projects** lists the last ones.
+
+For each world the project also remembers the client jar its textures came from (the "core"
+textures), even when they were found automatically, so the world looks the same the next time.
+An export writes `minecartographer-sources.xml` into the new world folder. It lists every world
+that chunks came from, how many, and their textures, so you can later see which textures and
+resource packs the merged world needs. Minecraft ignores the file. The title bar shows `*` when there are unsaved changes, and the editor asks
+before closing them.
+
+A project only refers to worlds by their folder and never contains them, so it stays small. The
+path is stored relative to the project file as well as in full, so you can move a project together
+with its saves. If a world can't be found, the project opens without it and tells you which
+chunks were left out. Undo history and the clipboard are not saved.
+
+The file is plain XML, so you can read it or keep it in version control:
+
+```xml
+<minecartographer-project format="1" app-version="0.2.0-alpha">
+  <worlds active="w0">
+    <world id="w0" name="My World" kind="folder" path="saves/My World" absolute-path="C:\...\My World"/>
+    <world id="w1" name="Old World" kind="folder" path="saves/Old World" absolute-path="C:\...\Old World">
+      <textures>
+        <file path="resourcepacks/Exotic.zip" absolute-path="C:\...\Exotic.zip"/>
+        <core-jar absolute-path="C:\...ersions.16.5.16.5.jar"/>
+      </textures>
+    </world>
+  </worlds>
+  <stack world="w0" active="1" next-id="2">
+    <base visible="true" locked="false">
+      <erase x="4" z="-2"/>
+    </base>
+    <layer id="1" name="Pasted: Old World" visible="true" locked="false" color="#FFFFB547">
+      <chunk x="10" z="3" world="w1" from-x="0" from-z="0"/>
+    </layer>
+  </stack>
+  <stack world="w1" active="0" next-id="1">
+    <base visible="true" locked="false"/>
+  </stack>
+  <editor render-mode="Blocks" rotation="0" zoom="2.0" .../>
+</minecartographer-project>
+```
+
 ### Keyboard shortcuts
 
 | Keys | Action |
@@ -126,6 +177,8 @@ The installer ends up in `app/build/compose/binaries/`.
 | PgUp / PgDn | Raise / lower the active layer |
 | Ctrl+E, Ctrl+Shift+E | Merge down, flatten |
 | Ctrl+Z, Ctrl+Y | Undo, redo |
+| Ctrl+N, Ctrl+Shift+O | New project, open project |
+| Ctrl+S, Ctrl+Alt+S | Save project, save project as |
 | Ctrl+O, Ctrl+Shift+S | Open world, export |
 
 ## Project layout
@@ -135,6 +188,7 @@ core/   World formats and editing logic, no UI
   nbt/      NBT reader and writer
   anvil/    Region files, level.dat, surface extraction, export
   edit/     Layers, clipboard, undo history
+  project/  Project files (XML)
 app/    Compose Desktop editor
   viewport/ Isometric camera, chunk tile rendering and caching
   editor/   Editor state, tools, shortcuts
