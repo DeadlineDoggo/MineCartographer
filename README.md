@@ -86,6 +86,12 @@ wool, ore...) and otherwise by the color of their texture; plants, pipes and cab
 mapping button on the layer opens the list of what each block becomes, marks guesses by color, and lets
 you pick another block. The choice is saved with the layer.
 
+**Analyze.** Right-click the selection (or a layer in the Layers panel) and choose Analyze to list every
+block in those chunks: how many of each, in how many chunks, its texture, and what it becomes in the base
+world. Count the selected chunks as the map shows them, only the active layer in them, or every layer. Filter by name or mod, pick a block's texture
+or mapping, select the chunks that contain a block, or export the list as CSV. The chunks are read when you
+ask; changing the selection afterwards doesn't start a new count.
+
 Moved chunks get their coordinates, block entities, entities and scheduled ticks updated. Their
 lighting is recalculated by the game, and structure references (villages, strongholds and so on)
 are removed from them so they don't point at the wrong place.
@@ -184,7 +190,8 @@ The file is plain XML, so you can read it or keep it in version control:
 
 | Keys | Action |
 |---|---|
-| WASD / arrows, right or middle drag | Move the view |
+| WASD / arrows, middle drag | Move the view |
+| Right click | Menu for the selection, a chunk or a layer |
 | Mouse wheel, `+` / `-` | Zoom |
 | `,` / `.` | Rotate the view |
 | F | Fit the world on screen |

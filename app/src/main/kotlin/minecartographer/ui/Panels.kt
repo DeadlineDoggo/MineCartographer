@@ -206,7 +206,7 @@ fun SelectionPanel(state: EditorState) {
         TextButton("Restore original chunks", Modifier.fillMaxWidth(), icon = Icons.Undo, enabled = has) { state.restoreOriginal() }
         Spacer(Modifier.height(6.dp))
         TextButton(if (state.analyzeVisible) "Hide analysis" else "Analyze selection…", Modifier.fillMaxWidth(), icon = Icons.Analyze, enabled = has) {
-            state.analyzeVisible = !state.analyzeVisible
+            state.toggleAnalyze()
         }
         Spacer(Modifier.height(4.dp))
         Txt("Copy, Cut and Clear act on the active layer. Copy visible takes what you see.",

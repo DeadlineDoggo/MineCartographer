@@ -96,6 +96,7 @@ private fun EditorLayout(state: EditorState, onExit: () -> Unit) {
                 AnalyzeDrawer(state)
                 BlockMappingDrawer(state)
                 HelpOverlay(state)
+                MapContextMenu(state)
             }
             if (state.rightDockVisible) {
                 Splitter { state.rightDockWidth = (state.rightDockWidth - it).coerceIn(MIN_DOCK_WIDTH, MAX_DOCK_WIDTH) }
@@ -166,7 +167,7 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             MenuSeparator,
             MenuItem("Layer to selection") { state.activeStack?.let { state.layerToSelection(it.activeId) } },
             MenuSeparator,
-            MenuItem("Analyze selection…", enabled = state.selection.isNotEmpty(), checked = state.analyzeVisible) { state.analyzeVisible = !state.analyzeVisible },
+            MenuItem("Analyze selection…", enabled = state.selection.isNotEmpty(), checked = state.analyzeVisible) { state.toggleAnalyze() },
         )
     },
     Menu("Layer") {

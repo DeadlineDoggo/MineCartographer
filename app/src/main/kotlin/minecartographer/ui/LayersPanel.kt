@@ -46,6 +46,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import minecartographer.core.ChunkPos
@@ -92,6 +93,7 @@ fun LayersPanel(state: EditorState) {
 @Composable
 private fun LayerRow(state: EditorState, stack: LayerStack, layer: Layer, active: Boolean) {
     var renaming by remember { mutableStateOf(false) }
+    var menuAt by remember { mutableStateOf<IntOffset?>(null) }
     Row(
         Modifier.fillMaxWidth().height(48.dp)
             .background(if (active) EditorTheme.accentSoft else Color.Transparent)
@@ -101,9 +103,15 @@ private fun LayerRow(state: EditorState, stack: LayerStack, layer: Layer, active
                     onDoubleTap = { if (layer is ChunkLayer) renaming = true },
                 )
             }
+            // Like GIMP: the layer becomes the active one, so the menu's commands act on it.
+            .onRightClick(layer.id) {
+                state.setActiveLayer(layer.id)
+                menuAt = it
+            }
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        menuAt?.let { at -> ContextMenu(at, layerMenuEntries(state, stack, layer) { renaming = true }) { menuAt = null } }
         if (active) Box(Modifier.width(3.dp).fillMaxHeight().padding(vertical = 6.dp).background(EditorTheme.accent))
         else Spacer(Modifier.width(3.dp))
         IconButton(
@@ -141,6 +149,29 @@ private fun LayerRow(state: EditorState, stack: LayerStack, layer: Layer, active
             }
         }
     }
+}
+
+/** The right-click menu of a layer row; the layer is the active one by then. */
+private fun layerMenuEntries(state: EditorState, stack: LayerStack, layer: Layer, rename: () -> Unit): List<MenuEntry> = buildList {
+    val isBase = layer is BaseLayer
+    val index = stack.indexOf(layer.id)
+    add(MenuItem("Analyze layer…") { state.analyzeLayer(layer.id) })
+    add(MenuItem("Layer to selection") { state.layerToSelection(layer.id) })
+    if (state.needsBlockMap(layer, stack)) add(MenuItem("Block mapping…") {
+        state.blockPickerKey = null
+        state.blockMapLayer = layer.id
+    })
+    add(MenuSeparator)
+    if (!isBase) add(MenuItem("Rename", "Double-click", action = rename))
+    add(MenuItem("Visible", checked = layer.visible) { state.toggleVisible(layer.id) })
+    add(MenuItem("Locked", checked = layer.locked) { state.toggleLocked(layer.id) })
+    add(MenuSeparator)
+    add(MenuItem("Duplicate layer", "Ctrl+Shift+D") { state.duplicateLayer() })
+    add(MenuItem("Raise layer", "PgUp", !isBase && index < stack.layers.lastIndex) { state.raiseLayer() })
+    add(MenuItem("Lower layer", "PgDn", !isBase && index > 1) { state.lowerLayer() })
+    add(MenuItem("Merge down", "Ctrl+E", stack.canMergeDown(layer.id)) { state.mergeDown() })
+    add(MenuSeparator)
+    add(MenuItem("Delete layer", enabled = !isBase) { state.deleteLayer() })
 }
 
 private fun layerSummary(stack: LayerStack, layer: Layer): String = when (layer) {

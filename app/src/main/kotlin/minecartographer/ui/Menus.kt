@@ -30,12 +30,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 
 sealed interface MenuEntry
@@ -89,6 +96,41 @@ fun MenuBar(menus: List<Menu>, modifier: Modifier = Modifier) {
                 }
             }
         }
+    }
+}
+
+/**
+ * A right-click menu at [at] (pixels from the top left of the composable that holds it), turned to the other side
+ * of the cursor where it would leave the window.
+ */
+@Composable
+fun ContextMenu(at: IntOffset, entries: List<MenuEntry>, onDismiss: () -> Unit) {
+    val position = remember(at) { AtCursor(at) }
+    Popup(popupPositionProvider = position, onDismissRequest = onDismiss, properties = PopupProperties(focusable = true)) {
+        MenuDropdown(entries, onDismiss)
+    }
+}
+
+/** Calls [action] with the pointer position when the right button goes down; [key] restarts it like `pointerInput`. */
+fun Modifier.onRightClick(key: Any?, action: (IntOffset) -> Unit) = pointerInput(key) {
+    awaitPointerEventScope {
+        while (true) {
+            val event = awaitPointerEvent()
+            if (event.type != PointerEventType.Press || !event.buttons.isSecondaryPressed) continue
+            val p = event.changes.firstOrNull()?.position ?: continue
+            action(IntOffset(p.x.toInt(), p.y.toInt()))
+        }
+    }
+}
+
+private class AtCursor(val at: IntOffset) : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize, layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+        val x = anchorBounds.left + at.x
+        val y = anchorBounds.top + at.y
+        return IntOffset(
+            (if (x + popupContentSize.width > windowSize.width) x - popupContentSize.width else x).coerceAtLeast(0),
+            (if (y + popupContentSize.height > windowSize.height) y - popupContentSize.height else y).coerceAtLeast(0),
+        )
     }
 }
 

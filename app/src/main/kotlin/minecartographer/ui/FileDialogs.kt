@@ -106,6 +106,29 @@ object FileDialogs {
         return file
     }
 
+    /** Asks where to save a CSV file, suggesting [suggestedName]; adds the extension and confirms before replacing. */
+    fun chooseCsvToSave(suggestedName: String): Path? {
+        platformLook
+        val chooser = JFileChooser().apply {
+            dialogTitle = "Export CSV"
+            isAcceptAllFileFilterUsed = false
+            fileFilter = object : FileFilter() {
+                override fun accept(f: File) = f.isDirectory || f.name.endsWith(".csv")
+                override fun getDescription() = "CSV spreadsheets (.csv)"
+            }
+            selectedFile = File(currentDirectory, "$suggestedName.csv")
+            approveButtonText = "Save"
+        }
+        if (chooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) return null
+        val picked = chooser.selectedFile.toPath()
+        val file = if (picked.fileName.toString().endsWith(".csv")) picked else picked.resolveSibling("${picked.fileName}.csv")
+        if (file.exists()) {
+            val answer = JOptionPane.showConfirmDialog(null, "${file.fileName} already exists. Replace it?", "Export CSV", JOptionPane.YES_NO_OPTION)
+            if (answer != JOptionPane.YES_OPTION) return null
+        }
+        return file
+    }
+
     enum class UnsavedChoice { Save, Discard, Cancel }
 
     /** Asks what to do with unsaved changes to the project called [name]. */

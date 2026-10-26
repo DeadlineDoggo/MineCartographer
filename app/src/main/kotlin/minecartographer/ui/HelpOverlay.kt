@@ -34,7 +34,8 @@ private class Group(val title: String, val entries: List<Entry>)
 
 private val TIPS = listOf(
     "Your save is never changed. Edits live in layers; export writes a new world.",
-    "Right or middle drag moves the view with every tool, so you never have to switch to Move view.",
+    "Middle drag moves the view with every tool, so you never have to switch to Move view.",
+    "Right-click the selection, a chunk or a layer for what you can do with it, like Analyze.",
     "Shift adds to a selection, Ctrl subtracts from it while you brush or drag a rectangle.",
     "Paste always makes a new layer: move it, hide it or delete it without touching the original.",
     "Selection tab: turn pasted chunks, raise or lower them, and cut them at a height to keep the original ground below.",
@@ -46,7 +47,8 @@ private val TIPS = listOf(
 private fun groups(): List<Group> = listOf(
     Group("MOVING AROUND", listOf(
         Entry("W A S D / arrows", "Move the view"),
-        Entry("Right / middle drag", "Move the view"),
+        Entry("Middle drag", "Move the view"),
+        Entry("Right click", "Menu for the chunk or selection"),
         Entry("Mouse wheel", "Zoom"),
         Entry("+ / -", "Zoom in / out"),
         Entry(", / .", "Rotate left / right"),

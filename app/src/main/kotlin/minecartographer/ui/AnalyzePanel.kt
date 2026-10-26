@@ -35,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -47,26 +48,37 @@ import minecartographer.core.anvil.AnvilWorld
 import minecartographer.core.convert.Conversion
 import minecartographer.core.edit.Layer
 import minecartographer.core.edit.LayerStack
+import minecartographer.editor.AnalyzeRequest
+import minecartographer.editor.AnalyzeScope
 import minecartographer.editor.EditorState
+import minecartographer.editor.SelectMode
 import minecartographer.textures.BlockModels
+import kotlin.io.path.writeText
 
 private val MIN_WIDTH = 420.dp
 private val MAX_WIDTH = 1400.dp
 
-/** One kind of block in the selection: from which world and layer (mapping is per layer), how many, in how many chunks. */
-private class Found(val world: WorldSource, val layer: Layer, val state: BlockState, val key: String, val blocks: Long, val chunks: Int)
+/**
+ * One kind of block in the analyzed chunks: from which world and layer (mapping is per layer), how many, in how many
+ * chunks, and which ones ([positions] only once every chunk is read).
+ */
+private class Found(val world: WorldSource, val layer: Layer, val state: BlockState, val key: String, val blocks: Long, val chunks: Int,
+    val positions: Set<ChunkPos>)
 
 /** The selection counted so far: [done] of [total] chunks read. */
 private class Analysis(val found: List<Found>, val done: Int, val total: Int)
+
+private enum class Sort(val label: String) { Count("Most"), Name("Name"), Mod("Mod") }
 
 private enum class Show(val label: String) {
     All("All"), Modded("Modded"), Problems("Problems"), Mapped("Mapped"), Vanilla("Vanilla")
 }
 
 /**
- * Analyze selection, laid over the map next to the left dock like Mods & textures: every block in the selected chunks
- * (all of them, not only what shows from above), how many of each, which are modded, which have no texture, and what
- * the ones the world doesn't have become. A block opens its details: choose its texture, or what it is mapped to.
+ * Analyze, laid over the map next to the left dock like Mods & textures: every block in the chunks asked for (the
+ * selection or a layer; all of them, not only what shows from above), how many of each, which are modded, which have no
+ * texture, and what the ones the world doesn't have become. A block opens its details: choose its texture, or what it
+ * is mapped to. The chunks are read once when asked for, not again on every selection change.
  */
 @Composable
 fun BoxScope.AnalyzeDrawer(state: EditorState) {
@@ -84,29 +96,55 @@ fun BoxScope.AnalyzeDrawer(state: EditorState) {
 
 @Composable
 private fun AnalyzePanel(state: EditorState, stack: LayerStack, modifier: Modifier) {
-    var run by remember { mutableStateOf(0) }
-    val selection = state.selection
-    // Read again for a new selection or on Rescan; mapping changes don't need the chunks again.
-    val analysis by produceState(Analysis(emptyList(), 0, selection.size), selection, stack.world, run) {
-        analyze(stack, selection.toList()) { value = it }
+    val request = state.analyzeRequest
+    // Read again only for a new request or Rescan; mapping changes don't need the chunks again.
+    val analysis by produceState(Analysis(emptyList(), 0, request?.positions?.size ?: 0), request, stack.world) {
+        if (request != null) analyze(stack, request) { value = it }
     }
     Column(modifier.background(EditorTheme.panel)) {
         Row(Modifier.fillMaxWidth().height(36.dp).padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Txt("ANALYZE SELECTION · ${selection.size} CHUNKS", Modifier.weight(1f), color = EditorTheme.textDim, size = 11.sp, weight = FontWeight.SemiBold)
-            WithTooltip("Read the selected chunks again") { TextButton("Rescan") { run++ } }
+            val title = request?.let { "ANALYZE ${it.what.uppercase()} · ${it.positions.size} CHUNKS" } ?: "ANALYZE"
+            Txt(title, Modifier.weight(1f), color = EditorTheme.textDim, size = 11.sp, weight = FontWeight.SemiBold)
+            WithTooltip("Read the same chunks again") { TextButton("Rescan", enabled = request != null) { state.reanalyze() } }
             Spacer(Modifier.width(4.dp))
             IconButton(Icons.Close, "Close", size = 24.dp, iconSize = 10.dp) { state.analyzeVisible = false }
         }
         HDivider()
         Column(Modifier.fillMaxSize().padding(12.dp)) {
-            if (selection.isEmpty()) {
-                Txt("Select chunks on the map to see what they are made of.", color = EditorTheme.textDim, size = 12.sp, maxLines = 2)
+            if (request == null || request.positions.isEmpty()) {
+                Txt("Select chunks on the map, then right-click them and choose Analyze selection.", color = EditorTheme.textDim, size = 12.sp, maxLines = 2)
+                if (state.selection.isNotEmpty()) TextButton("Analyze the selection", Modifier.padding(top = 8.dp), primary = true) { state.analyzeSelection() }
                 return@Column
             }
+            Changed(state, request)
+            WithTooltip("Selected: the chunks as the map shows them (the top layer of each, what the export writes). Layer: only the active layer in them. All layers: every layer, hidden ones too") {
+                Segmented(AnalyzeScope.entries, request.scope, { scopeLabel(stack, request, it) }) { state.reanalyze(it) }
+            }
+            Spacer(Modifier.height(8.dp))
             Progress(analysis)
             Spacer(Modifier.height(8.dp))
-            Content(state, stack, analysis)
+            Content(state, stack, request, analysis)
         }
+    }
+}
+
+private fun scopeLabel(stack: LayerStack, request: AnalyzeRequest, scope: AnalyzeScope): String =
+    if (scope == AnalyzeScope.Layer) "Layer \"${(stack.layer(if (request.scope == scope) request.layerId else stack.activeId) ?: stack.active).name}\""
+    else scope.label
+
+/** A note with a button when the selection is not what the panel shows. */
+@Composable
+private fun Changed(state: EditorState, request: AnalyzeRequest) {
+    val selection = state.selection
+    if (selection.isEmpty() || selection == request.positions) return
+    Row(
+        Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(4.dp)).background(EditorTheme.panelRaised)
+            .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Txt(if (request.fromSelection) "The selection changed since this analysis." else "Showing ${request.what}, not the selection.",
+            Modifier.weight(1f), color = EditorTheme.warning, size = 12.sp)
+        TextButton("Analyze the selection (${selection.size})") { state.analyzeSelection() }
     }
 }
 
@@ -127,26 +165,36 @@ private fun Progress(a: Analysis) {
     }
 }
 
-/** Counts every block of the selected chunks off the UI thread, reporting as it goes. */
-private suspend fun analyze(stack: LayerStack, positions: List<ChunkPos>, report: (Analysis) -> Unit) {
+/** Counts every block of the requested chunks off the UI thread, reporting as it goes. */
+private suspend fun analyze(stack: LayerStack, request: AnalyzeRequest, report: (Analysis) -> Unit) {
     data class Key(val world: WorldSource, val layer: Layer, val state: BlockState)
+    val positions = request.positions.toList()
     val blocks = HashMap<Key, Long>()
-    val chunks = HashMap<Key, Int>()
+    val chunks = HashMap<Key, MutableSet<ChunkPos>>()
+    // While reading, the chunk sets keep changing: only the last snapshot hands them out.
     fun snapshot(done: Int) = Analysis(blocks.entries.sortedByDescending { it.value }.map { (k, n) ->
-        Found(k.world, k.layer, k.state, Conversion.keyOf(k.state), n, chunks[k] ?: 0)
+        val where = chunks[k].orEmpty()
+        Found(k.world, k.layer, k.state, Conversion.keyOf(k.state), n, where.size, if (done == positions.size) where else emptySet())
     }, done, positions.size)
+    val chosen = stack.layer(request.layerId)
     var last = System.nanoTime()
     withContext(Dispatchers.IO) {
         for ((i, pos) in positions.withIndex()) {
-            val layer = stack.layerAt(pos) ?: continue
-            val ref = stack.contentOf(layer, pos) ?: continue
-            val counts = runCatching { ref.world.countBlocks(ref.pos) }.getOrNull() ?: continue
-            for ((s, n) in counts) {
-                // Variants of one block (facing, half...) count together; old modded blocks keep their data value.
-                val kind = s.properties["meta"]?.let { BlockState.of(s.name, mapOf("meta" to it)) } ?: BlockState.of(s.name)
-                val key = Key(ref.world, layer, kind)
-                blocks[key] = (blocks[key] ?: 0) + n
-                chunks[key] = (chunks[key] ?: 0) + 1
+            val layers = when (request.scope) {
+                AnalyzeScope.Visible -> listOfNotNull(stack.layerAt(pos))
+                AnalyzeScope.Layer -> listOfNotNull(chosen)
+                AnalyzeScope.All -> stack.layers
+            }
+            for (layer in layers) {
+                val ref = stack.contentOf(layer, pos) ?: continue
+                val counts = runCatching { ref.world.countBlocks(ref.pos) }.getOrNull() ?: continue
+                for ((s, n) in counts) {
+                    // Variants of one block (facing, half...) count together; old modded blocks keep their data value.
+                    val kind = s.properties["meta"]?.let { BlockState.of(s.name, mapOf("meta" to it)) } ?: BlockState.of(s.name)
+                    val key = Key(ref.world, layer, kind)
+                    blocks[key] = (blocks[key] ?: 0) + n
+                    chunks.getOrPut(key) { HashSet() } += pos
+                }
             }
             if (System.nanoTime() - last > 150_000_000) {
                 last = System.nanoTime()
@@ -165,7 +213,7 @@ private class Status(val modded: Boolean, val info: BlockModels.BlockInfo?, val 
 }
 
 @Composable
-private fun Content(state: EditorState, stack: LayerStack, analysis: Analysis) {
+private fun Content(state: EditorState, stack: LayerStack, request: AnalyzeRequest, analysis: Analysis) {
     // Textures arrive as mods load; refresh now and then.
     var tick by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) { while (true) { delay(1500); tick++ } }
@@ -173,31 +221,58 @@ private fun Content(state: EditorState, stack: LayerStack, analysis: Analysis) {
         value = withContext(Dispatchers.IO) { analysis.found.associateWith { status(state, stack, it) } }
     }
     var show by remember { mutableStateOf(Show.All) }
+    var sort by remember { mutableStateOf(Sort.Count) }
+    var query by remember { mutableStateOf("") }
     var selected by remember { mutableStateOf<Found?>(null) }
-    fun accepts(f: Found, s: Status?) = acceptsFor(show, s)
     val list: @Composable (Modifier) -> Unit = { m ->
         Column(m) {
             Segmented(Show.entries, show, { s -> "${s.label} ${analysis.found.count { acceptsFor(s, statuses[it]) }}" }) { show = it }
             Spacer(Modifier.height(6.dp))
-            val shown = analysis.found.filter { accepts(it, statuses[it]) }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    TextInput(query, { query = it }, Modifier.fillMaxWidth())
+                    if (query.isEmpty()) Txt("Filter by name, mod or layer", Modifier.align(Alignment.CenterStart).padding(start = 10.dp),
+                        color = EditorTheme.textFaint, size = 12.sp)
+                }
+                Spacer(Modifier.width(6.dp))
+                Box(Modifier.width(150.dp)) { Segmented(Sort.entries, sort, { it.label }) { sort = it } }
+            }
+            Spacer(Modifier.height(6.dp))
+            val shown = sorted(analysis.found.filter { acceptsFor(show, statuses[it]) && matches(it, statuses[it], query) }, sort)
             val scroll = rememberLazyListState()
             val thumbs = rememberThumbs()
+            val targetModels = state.modelsOf(stack.world)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(Modifier.fillMaxSize().padding(end = 10.dp), scroll, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     items(shown, key = { it.world.id + "/" + it.layer.id + "/" + it.key }) { f ->
                         val s = statuses[f]
                         val models = state.modelsOf(f.world)
+                        var menuAt by remember { mutableStateOf<IntOffset?>(null) }
                         Row(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp))
                                 .background(if (f === selected) EditorTheme.accentSoft else EditorTheme.panelRaised)
-                                .clickable { selected = f }.padding(horizontal = 8.dp, vertical = 4.dp),
+                                .clickable { selected = f }
+                                .onRightClick(f) {
+                                    selected = f
+                                    menuAt = it
+                                }
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            menuAt?.let { at -> ContextMenu(at, blockMenuEntries(state, stack, f)) { menuAt = null } }
                             StateThumb(thumbs(models), models, f.state, 28.dp)
                             Spacer(Modifier.width(8.dp))
                             Column(Modifier.weight(1f)) {
                                 Txt(f.key, size = 12.sp, mono = true)
-                                Txt(describe(s), color = statusColor(s), size = 11.sp)
+                                // Every layer is listed apart: say which one.
+                                val where = if (request.scope == AnalyzeScope.All) "${f.layer.name} · " else ""
+                                Txt(where + describe(s), color = statusColor(s), size = 11.sp)
+                            }
+                            // What it becomes, at a glance; the details pick another.
+                            s?.mapped?.let { mapped ->
+                                Txt("→", Modifier.padding(horizontal = 6.dp), color = EditorTheme.textDim, size = 14.sp)
+                                StateThumb(thumbs(targetModels), targetModels, mapped.target, 28.dp)
+                                Spacer(Modifier.width(8.dp))
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Txt("%,d".format(f.blocks), size = 12.sp, mono = true)
@@ -207,6 +282,15 @@ private fun Content(state: EditorState, stack: LayerStack, analysis: Analysis) {
                     }
                 }
                 VerticalScrollbar(rememberScrollbarAdapter(scroll), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Txt("${shown.size} shown · right-click a block to select its chunks", Modifier.weight(1f), color = EditorTheme.textFaint, size = 11.sp)
+                WithTooltip("Save the blocks shown, with counts, textures and mapping, as a spreadsheet") {
+                    TextButton("Export CSV…", enabled = shown.isNotEmpty() && analysis.done == analysis.total) {
+                        exportCsv(state, stack, shown, statuses)
+                    }
+                }
             }
         }
     }
@@ -230,6 +314,59 @@ private fun Content(state: EditorState, stack: LayerStack, analysis: Analysis) {
             detail(Modifier.weight(1.2f).fillMaxWidth())
         }
     }
+}
+
+private fun matches(f: Found, s: Status?, query: String): Boolean {
+    val q = query.trim()
+    return q.isEmpty() || f.key.contains(q, ignoreCase = true) || f.layer.name.contains(q, ignoreCase = true) ||
+        s?.mapped?.target?.name?.contains(q, ignoreCase = true) == true
+}
+
+/** The analysis comes sorted by count; by name ignores the mod, by mod keeps the biggest first within each. */
+private fun sorted(found: List<Found>, sort: Sort): List<Found> = when (sort) {
+    Sort.Count -> found
+    Sort.Name -> found.sortedBy { it.key.substringAfter(':') }
+    Sort.Mod -> found.sortedWith(compareBy<Found> { it.key.substringBefore(':') }.thenByDescending { it.blocks })
+}
+
+/** The right-click menu of a block in the list. */
+private fun blockMenuEntries(state: EditorState, stack: LayerStack, f: Found): List<MenuEntry> {
+    // The chunks are known once every chunk is read.
+    val ready = f.positions.isNotEmpty()
+    val chosen = f.key in layerOf(stack, f).blockMap
+    return listOf(
+        MenuItem("Select the ${f.chunks} chunks with this block", enabled = ready) { state.applySelection(f.positions, SelectMode.Replace) },
+        MenuItem("Add them to the selection", enabled = ready) { state.applySelection(f.positions, SelectMode.Add) },
+        MenuItem("Remove them from the selection", enabled = ready) { state.applySelection(f.positions, SelectMode.Subtract) },
+        MenuSeparator,
+        MenuItem("Back to automatic mapping", enabled = chosen) { state.mapBlock(f.layer.id, f.key, null) },
+        MenuItem("Copy name") { state.copyText(f.key) },
+    )
+}
+
+/** Saves [found] as a CSV file the user picks: one row per block with its counts, texture and mapping. */
+private fun exportCsv(state: EditorState, stack: LayerStack, found: List<Found>, statuses: Map<Found, Status>) {
+    val file = FileDialogs.chooseCsvToSave("blocks in ${stack.world.name}") ?: return
+    fun cell(value: Any): String {
+        val text = value.toString()
+        return if (text.any { it == ',' || it == '"' || it == '\n' }) "\"" + text.replace("\"", "\"\"") + "\"" else text
+    }
+    val rows = buildList {
+        add(listOf("block", "world", "layer", "blocks", "chunks", "kind", "texture", "becomes", "note"))
+        for (f in found) {
+            val s = statuses[f]
+            add(listOf(
+                f.key, f.world.name, f.layer.name, f.blocks, f.chunks,
+                when { s == null -> ""; s.modded -> "modded"; else -> "vanilla" },
+                s?.info?.let { it.texture ?: it.detail }.orEmpty(),
+                s?.mapped?.let { Conversion.format(it.target) }.orEmpty(),
+                s?.mapped?.reason ?: s?.info?.source?.label.orEmpty(),
+            ))
+        }
+    }
+    runCatching { file.writeText(rows.joinToString("\n") { row -> row.joinToString(",") { cell(it) } } + "\n") }
+        .onSuccess { state.notify("Saved ${found.size} blocks to ${file.fileName}") }
+        .onFailure { state.notify("Could not save ${file.fileName}: ${it.message}", warning = true) }
 }
 
 private fun acceptsFor(show: Show, s: Status?) = when (show) {

@@ -93,7 +93,7 @@ fun SelectionToolbar(state: EditorState, modifier: Modifier) {
 
 @Composable
 private fun AnalyzeButton(state: EditorState) = IconButton(Icons.Analyze, "Analyze selection: every block in it, unknown and mapped ones",
-    selected = state.analyzeVisible) { state.analyzeVisible = !state.analyzeVisible }
+    selected = state.analyzeVisible) { state.toggleAnalyze() }
 
 @Composable
 private fun Divider() = Box(Modifier.padding(horizontal = 4.dp).width(1.dp).height(22.dp).background(EditorTheme.border))

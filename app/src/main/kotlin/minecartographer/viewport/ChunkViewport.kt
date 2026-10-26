@@ -39,6 +39,7 @@ import minecartographer.core.edit.ChunkLayer
 import minecartographer.core.edit.ChunkRef
 import minecartographer.core.edit.LayerStack
 import minecartographer.editor.EditorState
+import minecartographer.editor.MapMenu
 import minecartographer.editor.SelectMode
 import minecartographer.editor.Tool
 import minecartographer.ui.EditorTheme
@@ -139,8 +140,9 @@ private fun rectPositions(a: ChunkPos, b: ChunkPos) = buildList {
 }
 
 /**
- * The central 2.5D view. The left button runs the active tool; right/middle drag always moves the view;
- * the wheel zooms around the cursor; WASD/arrow keys move. In paste mode a left click places the clipboard.
+ * The central 2.5D view. The left button runs the active tool; middle drag always moves the view; a right click opens
+ * the menu for the chunk or selection under it; the wheel zooms around the cursor; WASD/arrow keys move.
+ * In paste mode a left click places the clipboard.
  */
 @Composable
 fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
@@ -221,6 +223,8 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                 var last = Offset.Zero
                 var brushMode = SelectMode.Add
                 var moveStart = ChunkPos(0, 0)
+                // Where the right button went down: the menu opens when it comes up.
+                var menuAt: Offset? = null
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
@@ -248,7 +252,11 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                                 }
                                 val hit = pick(p)
                                 drag = when {
-                                    b.isSecondaryPressed || b.isTertiaryPressed -> Drag.Pan
+                                    b.isTertiaryPressed -> Drag.Pan
+                                    b.isSecondaryPressed -> {
+                                        menuAt = p
+                                        Drag.None
+                                    }
                                     !b.isPrimaryPressed -> Drag.None
                                     state.pasteMode -> {
                                         state.pasteAt(hit ?: pickGround(p, w, h), keepPlacing = mods.isShiftPressed)
@@ -304,6 +312,11 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                             }
                             PointerEventType.Release -> {
                                 val b = event.buttons
+                                val at = menuAt
+                                if (at != null && !b.isSecondaryPressed) {
+                                    menuAt = null
+                                    state.mapMenu = MapMenu(IntOffset(at.x.roundToInt(), at.y.roundToInt()), pick(at), pickGround(at, w, h))
+                                }
                                 if (!b.isPrimaryPressed && !b.isSecondaryPressed && !b.isTertiaryPressed) {
                                     when (drag) {
                                         Drag.RectSelect -> state.rectDrag?.let { (a, c) ->

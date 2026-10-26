@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
@@ -622,6 +623,49 @@ class EditorState {
         get() = analyzeShown
         set(value) { analyzeShown = value; if (value) modsShown = false }
     var analyzeWidth by mutableStateOf(720.dp)
+
+    /** What the Analyze panel counts. Fixed when asked for: changing the selection later doesn't read the chunks again. */
+    var analyzeRequest by mutableStateOf<AnalyzeRequest?>(null)
+        private set
+    private var analyzeRuns = 0
+
+    /** Analyzes the selected chunks and shows the panel. */
+    fun analyzeSelection(scope: AnalyzeScope = analyzeRequest?.scope ?: AnalyzeScope.Visible) {
+        val stack = activeStack ?: return
+        if (selection.isEmpty()) return notify("Select chunks to analyze first", warning = true)
+        analyzeRequest = AnalyzeRequest(selection, scope, stack.activeId, "selection", fromSelection = true, run = ++analyzeRuns)
+        analyzeVisible = true
+    }
+
+    /** Analyzes every chunk of the layer [id] (making it the active one) and shows the panel. */
+    fun analyzeLayer(id: Long) {
+        val stack = activeStack ?: return
+        val layer = stack.layer(id) ?: return
+        setActiveLayer(id)
+        analyzeRequest = AnalyzeRequest(stack.positionsOf(id), AnalyzeScope.Layer, id, "layer \"${layer.name}\"", fromSelection = false, run = ++analyzeRuns)
+        analyzeVisible = true
+    }
+
+    /** Reads the same chunks again, with [scope] (Layer means the layer active now). */
+    fun reanalyze(scope: AnalyzeScope? = null) {
+        val request = analyzeRequest ?: return
+        analyzeRequest = request.copy(scope = scope ?: request.scope, layerId = activeStack?.activeId ?: request.layerId, run = ++analyzeRuns)
+    }
+
+    /** The toolbar and menu button: hides the panel, or analyzes the selection. */
+    fun toggleAnalyze() {
+        if (analyzeVisible) analyzeVisible = false else analyzeSelection()
+    }
+
+    /** The right-click menu on the map, while it is open. */
+    var mapMenu by mutableStateOf<MapMenu?>(null)
+
+    /** Puts [text] on the system clipboard. */
+    fun copyText(text: String) {
+        runCatching { java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(java.awt.datatransfer.StringSelection(text), null) }
+            .onSuccess { notify("Copied $text") }
+            .onFailure { notify("Could not copy: ${it.message}", warning = true) }
+    }
 
     /** The pack [world] is drawn with, once its textures are loaded. */
     fun modelsOf(world: WorldSource): BlockModels? = tiles.textures[world.id] as? BlockModels
@@ -1466,3 +1510,25 @@ class EditorState {
         private const val FLATTENING_DATA_VERSION = 1519
     }
 }
+
+/** Which layers the Analyze panel reads in each chunk. */
+enum class AnalyzeScope(val label: String) {
+    /** The top visible layer: what the map shows and the export writes. */
+    Visible("Selected"),
+    Layer("Active layer"),
+    /** Every layer with a chunk there, hidden ones too. */
+    All("All layers"),
+}
+
+/** Chunks to analyze, with [layerId] for [AnalyzeScope.Layer]; [what] names them ("selection", "layer ..."). */
+data class AnalyzeRequest(
+    val positions: Set<ChunkPos>,
+    val scope: AnalyzeScope,
+    val layerId: Long,
+    val what: String,
+    val fromSelection: Boolean,
+    val run: Int,
+)
+
+/** A right-click on the map at [at] (pixels in the map): the [chunk] under it, or null on empty ground, and the [ground] position. */
+class MapMenu(val at: IntOffset, val chunk: ChunkPos?, val ground: ChunkPos)
