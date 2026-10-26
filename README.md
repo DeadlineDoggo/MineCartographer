@@ -1,6 +1,6 @@
 # MineCartographer
 
-> **Early alpha, v0.2.** It works on the worlds it has been tested with, but expect bugs and
+> **Early alpha, v0.3.** It works on the worlds it has been tested with, but expect bugs and
 > rough edges, and things may change between versions. Back up your worlds and check an exported
 > world in Minecraft before relying on it.
 
@@ -188,7 +188,7 @@ chunks were left out. Undo history and the clipboard are not saved.
 The file is plain XML, so you can read it or keep it in version control:
 
 ```xml
-<minecartographer-project format="1" app-version="0.3.0-alpha">
+<minecartographer-project format="1" app-version="0.3.1-alpha">
   <worlds active="w0">
     <world id="w0" name="My World" kind="folder" path="saves/My World" absolute-path="C:\...\My World"/>
     <world id="w1" name="Old World" kind="folder" path="saves/Old World" absolute-path="C:\...\Old World">
