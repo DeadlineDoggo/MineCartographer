@@ -20,6 +20,11 @@ new world. Your original saves are only read, never modified.
 - **Layers, like an image editor.** The original world is the bottom layer. Every paste becomes
   a new layer you can hide, lock, rename, reorder, merge down or flatten.
 - **Selection tools:** brush, rectangle, select all/none/invert, layer to selection.
+- **Right-click menus** on the map, on a layer and on a block or texture: analyze, copy and paste,
+  turn and raise, select, export.
+- **Analyze a selection or a layer:** every block in it, how many, which are modded, and what each
+  one becomes in the world it goes into.
+- **Texture atlas:** every texture of your mods and packs on one page, with export to PNG.
 - **Tools** to move a layer, erase chunks and pick the layer under the cursor.
 - **Copy and paste between worlds**, at the cursor or at the original coordinates.
 - **Non-destructive edits** with full undo/redo. Erasing in the original world only hides
@@ -86,15 +91,37 @@ wool, ore...) and otherwise by the color of their texture; plants, pipes and cab
 mapping button on the layer opens the list of what each block becomes, marks guesses by color, and lets
 you pick another block. The choice is saved with the layer.
 
-**Analyze.** Right-click the selection (or a layer in the Layers panel) and choose Analyze to list every
-block in those chunks: how many of each, in how many chunks, its texture, and what it becomes in the base
-world. Count the selected chunks as the map shows them, only the active layer in them, or every layer. Filter by name or mod, pick a block's texture
-or mapping, select the chunks that contain a block, or export the list as CSV. The chunks are read when you
-ask; changing the selection afterwards doesn't start a new count.
-
 Moved chunks get their coordinates, block entities, entities and scheduled ticks updated. Their
 lighting is recalculated by the game, and structure references (villages, strongholds and so on)
 are removed from them so they don't point at the wrong place.
+
+## Looking inside: right-click, analyze, textures
+
+**Right-click** is the quickest way to the common actions. On the selection it offers analyze,
+cut, copy, paste, turn, raise or lower, clear and restore. On any other chunk it can select it,
+analyze it, paste here, make its layer the active one and copy its coordinates (chunk, block,
+region file or a `/tp` command). A layer in the Layers panel has its own menu, and so do the blocks
+in the analysis and the textures in the lists. Middle drag moves the view.
+
+![Right-click menu on the selection](docs/right-click-menu.png)
+
+**Analyze.** Choose *Analyze selection…* (or *Analyze layer…* on a layer) to list every block in
+those chunks, not only what shows from above: how many of each, in how many chunks, its texture,
+and what it becomes in the base world, with a thumbnail of the result. Count the selected chunks as
+the map shows them, only the active layer in them, or every layer. Filter by name, mod or layer,
+sort by count, name or mod, pick a block's texture or what it becomes, right-click a block to select
+the chunks that contain it, or export the list as CSV. The chunks are read when you ask; changing
+the selection afterwards doesn't start a new count, it offers to analyze the new one.
+
+![Analyzing a selection](docs/analyze-selection.png)
+
+**Texture atlas.** *View → Texture atlas* opens every block texture of the world's packs and mods
+as a tab next to the map (the map tab stays, the atlas tab has a close button). Textures are grouped
+by mod, with a filter and a size switch. Right-click a texture, in the atlas or in the texture picker
+of *Mods & textures*, to save it as a PNG (as the pack has it, or enlarged with sharp pixels), copy
+its name, or export everything shown into a folder laid out like a resource pack.
+
+![The texture atlas](docs/texture-atlas.png)
 
 ## Limitations
 
