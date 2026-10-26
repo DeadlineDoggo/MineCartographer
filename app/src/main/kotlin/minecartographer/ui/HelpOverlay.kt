@@ -41,6 +41,7 @@ private val TIPS = listOf(
     "Selection tab: turn pasted chunks, raise or lower them, and cut them at a height to keep the original ground below.",
     "Textured mode draws real block models. Modded worlds before 1.8 are guessed; fix blocks in View → Mods & textures.",
     "Rescan (View tab) rebuilds every texture cache if results look stale.",
+    "View → Texture atlas shows every texture of the mods in a tab; right-click a texture to export it.",
     "Save project keeps your layers, texture picks and mod folders; export is the finished world.",
 )
 

@@ -107,25 +107,36 @@ object FileDialogs {
     }
 
     /** Asks where to save a CSV file, suggesting [suggestedName]; adds the extension and confirms before replacing. */
-    fun chooseCsvToSave(suggestedName: String): Path? {
+    fun chooseCsvToSave(suggestedName: String): Path? = chooseFileToSave("Export CSV", "csv", "CSV spreadsheets", suggestedName)
+
+    /** Where the last file was exported to, so the next dialog opens there (kept for this session only). */
+    private var lastExportFolder: File? = null
+
+    /**
+     * Asks where to save a file of the type [extension] (without the dot), suggesting [suggestedName] (with or without
+     * the extension); adds the extension and confirms before replacing.
+     */
+    fun chooseFileToSave(title: String, extension: String, description: String, suggestedName: String): Path? {
         platformLook
-        val chooser = JFileChooser().apply {
-            dialogTitle = "Export CSV"
+        val suffix = ".$extension"
+        val chooser = JFileChooser(lastExportFolder).apply {
+            dialogTitle = title
             isAcceptAllFileFilterUsed = false
             fileFilter = object : FileFilter() {
-                override fun accept(f: File) = f.isDirectory || f.name.endsWith(".csv")
-                override fun getDescription() = "CSV spreadsheets (.csv)"
+                override fun accept(f: File) = f.isDirectory || f.name.endsWith(suffix)
+                override fun getDescription() = "$description ($suffix)"
             }
-            selectedFile = File(currentDirectory, "$suggestedName.csv")
+            selectedFile = File(currentDirectory, if (suggestedName.endsWith(suffix)) suggestedName else suggestedName + suffix)
             approveButtonText = "Save"
         }
         if (chooser.showSaveDialog(null) != JFileChooser.APPROVE_OPTION) return null
         val picked = chooser.selectedFile.toPath()
-        val file = if (picked.fileName.toString().endsWith(".csv")) picked else picked.resolveSibling("${picked.fileName}.csv")
+        val file = if (picked.fileName.toString().endsWith(suffix)) picked else picked.resolveSibling("${picked.fileName}$suffix")
         if (file.exists()) {
-            val answer = JOptionPane.showConfirmDialog(null, "${file.fileName} already exists. Replace it?", "Export CSV", JOptionPane.YES_NO_OPTION)
+            val answer = JOptionPane.showConfirmDialog(null, "${file.fileName} already exists. Replace it?", title, JOptionPane.YES_NO_OPTION)
             if (answer != JOptionPane.YES_OPTION) return null
         }
+        lastExportFolder = file.parent?.toFile()
         return file
     }
 

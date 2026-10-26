@@ -657,6 +657,28 @@ class EditorState {
         if (analyzeVisible) analyzeVisible = false else analyzeSelection()
     }
 
+    /** What the main area shows: the map, or the texture atlas that opens beside it as a tab. */
+    var mainTab by mutableStateOf(MainTab.Map)
+        private set
+
+    /** The Texture atlas tab is open (the Map tab always is). */
+    var atlasOpen by mutableStateOf(false)
+        private set
+
+    fun openAtlas() {
+        atlasOpen = true
+        mainTab = MainTab.Atlas
+    }
+
+    fun closeAtlas() {
+        atlasOpen = false
+        mainTab = MainTab.Map
+    }
+
+    fun showMainTab(tab: MainTab) {
+        if (tab == MainTab.Map || atlasOpen) mainTab = tab
+    }
+
     /** The right-click menu on the map, while it is open. */
     var mapMenu by mutableStateOf<MapMenu?>(null)
 
@@ -1510,6 +1532,9 @@ class EditorState {
         private const val FLATTENING_DATA_VERSION = 1519
     }
 }
+
+/** The tabs over the main area. The map can't be closed. */
+enum class MainTab { Map, Atlas }
 
 /** Which layers the Analyze panel reads in each chunk. */
 enum class AnalyzeScope(val label: String) {

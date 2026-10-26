@@ -41,6 +41,7 @@ import kotlinx.coroutines.delay
 import minecartographer.core.edit.BaseLayer
 import minecartographer.editor.DockTab
 import minecartographer.editor.EditorState
+import minecartographer.editor.MainTab
 import minecartographer.editor.Tool
 import minecartographer.editor.WorldLibrary
 import minecartographer.editor.newProjectInteractive
@@ -89,14 +90,20 @@ private fun EditorLayout(state: EditorState, onExit: () -> Unit) {
                 LeftDock(state, Modifier.width(state.leftDockWidth).fillMaxHeight())
                 Splitter { state.leftDockWidth = (state.leftDockWidth + it).coerceIn(MIN_DOCK_WIDTH, MAX_DOCK_WIDTH) }
             }
-            Box(Modifier.weight(1f).fillMaxHeight()) {
-                ChunkViewport(state, Modifier.fillMaxSize())
-                ViewportOverlay(state)
-                ModsDrawer(state)
-                AnalyzeDrawer(state)
-                BlockMappingDrawer(state)
-                HelpOverlay(state)
-                MapContextMenu(state)
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                // The tabs appear with the atlas: the map is one of them and stays.
+                if (state.atlasOpen) MainTabs(state)
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    if (state.mainTab == MainTab.Atlas) AtlasView(state) else {
+                        ChunkViewport(state, Modifier.fillMaxSize())
+                        ViewportOverlay(state)
+                        ModsDrawer(state)
+                        AnalyzeDrawer(state)
+                        BlockMappingDrawer(state)
+                        MapContextMenu(state)
+                    }
+                    HelpOverlay(state)
+                }
             }
             if (state.rightDockVisible) {
                 Splitter { state.rightDockWidth = (state.rightDockWidth - it).coerceIn(MIN_DOCK_WIDTH, MAX_DOCK_WIDTH) }
@@ -208,6 +215,9 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             }.toTypedArray(),
             MenuItem("2D from above", "V", checked = s.flat) { state.setFlat(!s.flat) },
             MenuSeparator,
+            MenuItem("Texture atlas", checked = state.mainTab == MainTab.Atlas, enabled = state.activeWorld != null) {
+                if (state.mainTab == MainTab.Atlas) state.closeAtlas() else state.openAtlas()
+            },
             MenuItem("Mods & textures…", enabled = (state.activeWorld as? minecartographer.core.anvil.AnvilWorld)?.info?.forge != null) { state.modsPanelVisible = true },
             MenuSeparator,
             MenuItem("Chunk borders", checked = s.chunkBorders) { state.updateRenderSettings(s.copy(chunkBorders = !s.chunkBorders)) },

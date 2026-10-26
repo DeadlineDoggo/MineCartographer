@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -330,14 +331,28 @@ internal fun BlockDetail(state: EditorState, world: AnvilWorld, models: BlockMod
             LazyVerticalGrid(GridCells.Adaptive(64.dp), Modifier.fillMaxSize().padding(end = 10.dp), grid) {
                 items(candidates, key = { it }) { id ->
                     val current = id == info?.texture
+                    var menuAt by remember { mutableStateOf<IntOffset?>(null) }
                     WithTooltip(id) {
                         Column(
                             Modifier.padding(3.dp).clip(RoundedCornerShape(4.dp))
                                 .background(if (current) EditorTheme.accentSoft else EditorTheme.panelRaised)
                                 .border(1.dp, if (current) EditorTheme.accent else Color.Transparent, RoundedCornerShape(4.dp))
-                                .clickable { state.setBlockTexture(world, key, id) }.padding(4.dp),
+                                .clickable { state.setBlockTexture(world, key, id) }
+                                .onRightClick(id) { menuAt = it }
+                                .padding(4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
+                            menuAt?.let { at ->
+                                ContextMenu(at, listOf(
+                                    MenuItem("Use for this block") { state.setBlockTexture(world, key, id) },
+                                    MenuSeparator,
+                                    MenuItem("Export texture as PNG…") { TextureExport.exportOne(state, models, id) },
+                                    MenuItem("Export enlarged (×${TextureExport.ENLARGED})…") { TextureExport.exportOne(state, models, id, TextureExport.ENLARGED) },
+                                    MenuItem("Copy name") { state.copyText(id) },
+                                    MenuSeparator,
+                                    MenuItem("Open the texture atlas") { state.openAtlas() },
+                                )) { menuAt = null }
+                            }
                             Thumb(thumbs, id, null, 48.dp)
                             Txt(id.substringAfterLast('/'), color = EditorTheme.textDim, size = 9.sp)
                         }

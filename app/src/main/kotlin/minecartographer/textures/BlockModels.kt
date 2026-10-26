@@ -467,6 +467,12 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
         listOfNotNull(path, ALIASES[path], path.trimEnd { it.isDigit() }.takeIf { it != path && it.isNotEmpty() })
             .map { "assets/$ns/blockstates/$it.json" }.firstOrNull { assets.has(it) }
 
+    /** The PNG file of texture [id] as the archives have it (an animation is still the whole strip); null if there is none. */
+    fun textureBytes(id: String): ByteArray? {
+        val (ns, path) = split(id.substringBefore('#'))
+        return assets.read("assets/$ns/textures/$path.png")
+    }
+
     fun texture(id: String): Texture? = textures.getOrPut(id) {
         cache?.texture(id)?.let { return@getOrPut Optional(it) }
         // `ns:path#2` is the third frame of a strip of variants (see LegacyTextures).
