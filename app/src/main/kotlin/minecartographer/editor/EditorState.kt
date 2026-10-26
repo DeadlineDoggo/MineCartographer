@@ -227,6 +227,9 @@ class EditorState {
         private set
     var exportDialogVisible by mutableStateOf(false)
 
+    /** The world whose Info window is open, from its right-click menu. */
+    var worldInfo by mutableStateOf<WorldSource?>(null)
+
     fun isOpen(folder: Path) = worlds.any { (it as? AnvilWorld)?.folder?.toAbsolutePath()?.normalize() == folder.toAbsolutePath().normalize() }
 
     /** Opens a world save folder in the background, showing progress in the loading layer. */
@@ -652,9 +655,20 @@ class EditorState {
         analyzeRequest = request.copy(scope = scope ?: request.scope, layerId = activeStack?.activeId ?: request.layerId, run = ++analyzeRuns)
     }
 
-    /** The toolbar and menu button: hides the panel, or analyzes the selection. */
+    /** The toolbar and menu button: folds the panel, or brings it back, or analyzes the selection if that is not what it had. */
     fun toggleAnalyze() {
-        if (analyzeVisible) analyzeVisible = false else analyzeSelection()
+        val request = analyzeRequest
+        when {
+            analyzeVisible -> analyzeVisible = false
+            request != null && (selection.isEmpty() || selection == request.positions) -> analyzeVisible = true
+            else -> analyzeSelection()
+        }
+    }
+
+    /** Closes the panel for good, with its tab on the map's edge: the next analysis starts from nothing. */
+    fun dismissAnalyze() {
+        analyzeVisible = false
+        analyzeRequest = null
     }
 
     /** What the main area shows: the map, or the texture atlas that opens beside it as a tab. */

@@ -82,7 +82,10 @@ private enum class Show(val label: String) {
  */
 @Composable
 fun BoxScope.AnalyzeDrawer(state: EditorState) {
-    if (!state.analyzeVisible) return
+    if (!state.analyzeVisible) {
+        AnalyzeTab(state)
+        return
+    }
     val stack = state.activeStack ?: return
     Row(
         Modifier.align(Alignment.TopStart).fillMaxHeight().overMap(state)
@@ -94,20 +97,52 @@ fun BoxScope.AnalyzeDrawer(state: EditorState) {
     }
 }
 
+/** The folded panel: a tab on the map's edge under the one of Mods & textures. */
+@Composable
+private fun BoxScope.AnalyzeTab(state: EditorState) {
+    val request = state.analyzeRequest ?: return
+    // The Mods & textures panel covers the edge while it is open.
+    if (state.modsPanelVisible) return
+    val world = state.activeWorld as? AnvilWorld
+    val modsTab = world != null && state.hasMods(world)
+    val shape = RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp)
+    Row(
+        Modifier.align(Alignment.TopStart).padding(top = if (modsTab) 96.dp else 52.dp).overMap(state).clip(shape)
+            .background(EditorTheme.panelRaised).border(1.dp, EditorTheme.border, shape)
+            .clickable { state.analyzeVisible = true }.padding(start = 10.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Txt("▸ Analyze · ${request.positions.size} chunks", size = 12.sp)
+        Spacer(Modifier.width(4.dp))
+        IconButton(Icons.Close, "Close the analysis", size = 24.dp, iconSize = 9.dp) { state.dismissAnalyze() }
+    }
+}
+
+/** The last finished analysis, kept while the panel is folded so that opening it again doesn't read the chunks again. */
+private var finished: Triple<AnalyzeRequest, WorldSource, Analysis>? = null
+
 @Composable
 private fun AnalyzePanel(state: EditorState, stack: LayerStack, modifier: Modifier) {
     val request = state.analyzeRequest
     // Read again only for a new request or Rescan; mapping changes don't need the chunks again.
-    val analysis by produceState(Analysis(emptyList(), 0, request?.positions?.size ?: 0), request, stack.world) {
-        if (request != null) analyze(stack, request) { value = it }
+    val kept = finished?.takeIf { it.first == request && it.second == stack.world }?.third
+    val analysis by produceState(kept ?: Analysis(emptyList(), 0, request?.positions?.size ?: 0), request, stack.world) {
+        if (request != null && kept == null) analyze(stack, request) {
+            value = it
+            if (it.done == it.total) finished = Triple(request, stack.world, it)
+        }
     }
     Column(modifier.background(EditorTheme.panel)) {
         Row(Modifier.fillMaxWidth().height(36.dp).padding(start = 12.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             val title = request?.let { "ANALYZE ${it.what.uppercase()} · ${it.positions.size} CHUNKS" } ?: "ANALYZE"
             Txt(title, Modifier.weight(1f), color = EditorTheme.textDim, size = 11.sp, weight = FontWeight.SemiBold)
-            WithTooltip("Read the same chunks again") { TextButton("Rescan", enabled = request != null) { state.reanalyze() } }
+            // One button: the selection if it is not what was analyzed, else the same chunks again.
+            val newSelection = request != null && state.selection.isNotEmpty() && state.selection != request.positions
+            if (newSelection) WithTooltip("Analyze the ${state.selection.size} selected chunks now") {
+                TextButton("Analyze selection (${state.selection.size})", primary = true) { state.analyzeSelection() }
+            } else WithTooltip("Read the same chunks again") { TextButton("Rescan", enabled = request != null) { state.reanalyze() } }
             Spacer(Modifier.width(4.dp))
-            IconButton(Icons.Close, "Close", size = 24.dp, iconSize = 10.dp) { state.analyzeVisible = false }
+            IconButton(Icons.Close, "Fold the panel into a tab on the map's edge", size = 24.dp, iconSize = 10.dp) { state.analyzeVisible = false }
         }
         HDivider()
         Column(Modifier.fillMaxSize().padding(12.dp)) {
@@ -139,12 +174,11 @@ private fun Changed(state: EditorState, request: AnalyzeRequest) {
     if (selection.isEmpty() || selection == request.positions) return
     Row(
         Modifier.fillMaxWidth().padding(bottom = 8.dp).clip(RoundedCornerShape(4.dp)).background(EditorTheme.panelRaised)
-            .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Txt(if (request.fromSelection) "The selection changed since this analysis." else "Showing ${request.what}, not the selection.",
             Modifier.weight(1f), color = EditorTheme.warning, size = 12.sp)
-        TextButton("Analyze the selection (${selection.size})") { state.analyzeSelection() }
     }
 }
 

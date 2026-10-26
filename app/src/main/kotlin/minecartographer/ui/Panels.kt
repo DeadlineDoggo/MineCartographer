@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import minecartographer.core.ChunkPos
@@ -139,16 +140,37 @@ private fun ForgeChip(forge: ForgeData) = WithTooltip("${forge.generation.label}
     )
 }
 
+/** The right-click menu of an open world. */
+private fun worldMenu(state: EditorState, world: WorldSource, active: Boolean, close: () -> Unit, activate: () -> Unit): List<MenuEntry> {
+    val anvil = world as? AnvilWorld
+    return listOf(
+        MenuItem("Info…") { state.worldInfo = world },
+        MenuItem("Make the active world", enabled = !active, action = activate),
+        MenuItem("Mods & textures…", enabled = anvil != null && state.hasMods(anvil)) {
+            activate()
+            state.modsPanelVisible = true
+        },
+        MenuSeparator,
+        MenuItem("Show in the file manager", enabled = anvil != null) { anvil?.let { FileDialogs.showInFolder(it.folder) } },
+        MenuItem("Copy the path", enabled = anvil != null) { anvil?.let { state.copyText(it.folder.toString()) } },
+        MenuSeparator,
+        MenuItem("Close world", action = close),
+    )
+}
+
 @Composable
 private fun WorldCard(state: EditorState, world: WorldSource, active: Boolean, onClose: () -> Unit, onClick: () -> Unit) {
     val shape = RoundedCornerShape(6.dp)
+    var menuAt by remember { mutableStateOf<IntOffset?>(null) }
     Column(
         Modifier.fillMaxWidth().clip(shape)
             .background(if (active) EditorTheme.accentSoft else EditorTheme.panelRaised)
             .border(1.dp, if (active) EditorTheme.accent else EditorTheme.border, shape)
             .clickable(onClick = onClick)
+            .onRightClick(world.id) { menuAt = it }
             .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 8.dp)
     ) {
+        menuAt?.let { at -> ContextMenu(at, worldMenu(state, world, active, onClose, onClick)) { menuAt = null } }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Txt(world.name, Modifier.weight(1f), weight = FontWeight.SemiBold)
             (world as? AnvilWorld)?.info?.forge?.let { ForgeChip(it) }

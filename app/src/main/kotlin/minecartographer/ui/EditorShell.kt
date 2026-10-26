@@ -74,6 +74,7 @@ fun EditorShell(state: EditorState, onExit: () -> Unit) {
     }
     StartScreen(state)
     ExportDialog(state)
+    WorldInfoDialog(state)
 }
 
 @Composable

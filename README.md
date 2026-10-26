@@ -101,7 +101,10 @@ are removed from them so they don't point at the wrong place.
 cut, copy, paste, turn, raise or lower, clear and restore. On any other chunk it can select it,
 analyze it, paste here, make its layer the active one and copy its coordinates (chunk, block,
 region file or a `/tp` command). A layer in the Layers panel has its own menu, and so do the blocks
-in the analysis and the textures in the lists. Middle drag moves the view.
+in the analysis and the textures in the lists. Right-click an open world for **Info**: where it is on disk,
+its game version and Forge version, the dates (last played, saved, created), game mode and seed, where the
+player was, the dimensions and their size, the mods and where they were found, with buttons to open or copy
+each path. Middle drag moves the view.
 
 ![Right-click menu on the selection](docs/right-click-menu.png)
 
