@@ -43,6 +43,8 @@ compose.desktop {
 
         nativeDistributions {
             targetFormats(TargetFormat.Msi, TargetFormat.Dmg, TargetFormat.Deb)
+            // The installer bundles its own Java runtime with these modules (from `suggestRuntimeModules`).
+            modules("java.instrument", "java.prefs", "jdk.unsupported")
             packageName = "MineCartographer"
             packageVersion = appVersion.substringBefore('-')
             vendor = "Emanuel Cisar"
@@ -53,9 +55,15 @@ compose.desktop {
                 iconFile = layout.projectDirectory.file("icons/app.ico")
                 menuGroup = "MineCartographer"
                 shortcut = true
+                dirChooser = true
+                // Never change it: a new MSI with the same id replaces the installed version instead of adding a second one.
+                upgradeUuid = "228eb82e-9a99-43fb-9610-bc6f23dcc2c6"
             }
             linux {
                 iconFile = layout.projectDirectory.file("icons/app.png")
+                shortcut = true // .desktop entry in the applications menu
+                menuGroup = "Utility"
+                appCategory = "Utility"
             }
         }
     }

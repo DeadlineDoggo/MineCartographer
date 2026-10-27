@@ -140,6 +140,20 @@ its name, or export everything shown into a folder laid out like a resource pack
 
 ## Getting started
 
+Download a package from the [Releases](https://github.com/DeadlineDoggo/MineCartographer/releases)
+page. Each one brings its own Java runtime, so you don't need Java installed, and any Java you do
+have doesn't matter.
+
+- **Windows:** run `MineCartographer-x.y.z.msi`. A newer installer replaces the installed version.
+- **Debian, Ubuntu, Mint:** `sudo apt install ./minecartographer_x.y.z_amd64.deb`. The app goes to
+  `/opt/minecartographer` and appears in the applications menu.
+- **Other Linux:** unpack `MineCartographer-x.y.z-linux-x64.tar.gz` anywhere and run
+  `MineCartographer/bin/MineCartographer`.
+
+macOS users build from source for now (see below).
+
+### From source
+
 You need **JDK 25** to build and run from source. The Gradle wrapper is included.
 
 ```sh
@@ -158,7 +172,9 @@ To build an installer for your platform (MSI on Windows, DMG on macOS, DEB on Li
 ./gradlew :app:packageDistributionForCurrentOS
 ```
 
-The installer ends up in `app/build/compose/binaries/`.
+The installer ends up in `app/build/compose/binaries/`. Each platform builds only its own package
+(the DEB needs `fakeroot`). Pushing a tag like `v0.3.2-alpha` builds the Windows and Linux packages
+on GitHub Actions and attaches them to a draft release.
 
 ## Using it
 

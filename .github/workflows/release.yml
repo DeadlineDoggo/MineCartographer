@@ -1,0 +1,82 @@
+# Builds the installers (each bundles its own Java runtime) and attaches them to a draft release.
+# Runs on a pushed tag like v0.3.2-alpha; publish the draft by hand after checking it.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: # manual run: builds the packages as workflow artifacts, no release
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          # The oldest supported runner, so the bundled runtime runs on older glibc too.
+          - os: ubuntu-22.04
+            name: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Check that the tag matches appVersion
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version=$(grep '^appVersion=' gradle.properties | cut -d= -f2)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match appVersion=$version in gradle.properties"
+            exit 1
+          fi
+
+      - name: Build the MSI
+        if: matrix.name == 'windows'
+        run: ./gradlew :app:packageMsi
+
+      - name: Build the DEB and the portable archive
+        if: matrix.name == 'linux'
+        run: |
+          sudo apt-get install -y fakeroot
+          ./gradlew :app:packageDeb :app:createDistributable
+          version=$(grep '^appVersion=' gradle.properties | cut -d= -f2)
+          tar -czf "app/build/compose/binaries/main/MineCartographer-$version-linux-x64.tar.gz" \
+            -C app/build/compose/binaries/main/app MineCartographer
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            app/build/compose/binaries/main/msi/*.msi
+            app/build/compose/binaries/main/deb/*.deb
+            app/build/compose/binaries/main/*.tar.gz
+
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The artifacts keep their msi/ and deb/ subfolders.
+          gh release create "$GITHUB_REF_NAME" $(find dist -type f) \
+            --repo "$GITHUB_REPOSITORY" --draft --prerelease --title "$GITHUB_REF_NAME" --generate-notes
