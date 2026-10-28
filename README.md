@@ -152,6 +152,11 @@ have doesn't matter.
 
 macOS users build from source for now (see below).
 
+Open and save dialogs are the ones of your system: the Explorer dialog on Windows (hidden folders
+like `.minecraft` shown), the KDE or GNOME dialog on Linux (through `kdialog`, or `zenity` and the
+desktop portal; show hidden folders with `Ctrl+H` or `Alt+.`), and the Finder panel on macOS. If none
+is available the app falls back to its built-in one.
+
 ### From source
 
 You need **JDK 25** to build and run from source. The Gradle wrapper is included.
