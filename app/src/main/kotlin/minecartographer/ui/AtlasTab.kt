@@ -4,6 +4,7 @@ import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -40,151 +41,130 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import minecartographer.editor.AtlasState
 import minecartographer.editor.EditorState
-import minecartographer.editor.MainTab
 import minecartographer.textures.BlockModels
-
-/** The tab strip over the main area while the atlas is open: the map (always there) and the closable atlas. */
-@Composable
-fun MainTabs(state: EditorState) {
-    Row(
-        Modifier.fillMaxWidth().height(32.dp).background(EditorTheme.toolbar),
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        Tab("Map", state.mainTab == MainTab.Map, onClose = null) { state.showMainTab(MainTab.Map) }
-        Tab("Texture atlas · ${state.activeWorld?.name ?: "no world"}", state.mainTab == MainTab.Atlas, onClose = { state.closeAtlas() }) {
-            state.showMainTab(MainTab.Atlas)
-        }
-    }
-}
-
-@Composable
-private fun Tab(label: String, selected: Boolean, onClose: (() -> Unit)?, onSelect: () -> Unit) {
-    val shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp)
-    Row(
-        Modifier.padding(start = 4.dp, top = 4.dp).clip(shape)
-            .background(if (selected) EditorTheme.panel else Color.Transparent)
-            .clickable(onClick = onSelect)
-            .padding(start = 12.dp, end = if (onClose == null) 12.dp else 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.height(28.dp), contentAlignment = Alignment.Center) {
-            Txt(label, color = if (selected) EditorTheme.text else EditorTheme.textDim, size = 12.sp, weight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
-            // The line takes the width of the label; fillMaxWidth would stretch the whole tab across the strip.
-            if (selected) Box(Modifier.matchParentSize()) { Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(2.dp).background(EditorTheme.accent)) }
-        }
-        if (onClose != null) {
-            Spacer(Modifier.width(6.dp))
-            IconButton(Icons.Close, "Close the atlas", size = 20.dp, iconSize = 8.dp, onClick = onClose)
-        }
-    }
-}
 
 private val SIZES = listOf(48, 64, 96, 128)
 private val SIZE_LABELS = listOf("S", "M", "L", "XL")
 
 /**
- * Every block texture of the active world's packs and mods on one page, grouped by mod, filled to the map's place.
- * Click one for its details; right-click for export.
+ * The middle of the atlas workspace: every block texture of the active world's packs and mods on one page,
+ * grouped by mod. Click one for its details (right dock); right-click for export.
  */
 @Composable
 fun AtlasView(state: EditorState) {
+    val atlas = state.workspaces.atlas
     val world = state.activeWorld
     // The packs load in the background: look again until they are there.
-    var tick by remember { mutableStateOf(0) }
-    LaunchedEffect(world) { while (true) { delay(1000); tick++ } }
-    val models = remember(tick, world) { world?.let(state::modelsOf) }
+    LaunchedEffect(world) {
+        while (true) {
+            atlas.update(world?.let(state::modelsOf))
+            delay(1000)
+        }
+    }
+    val models = atlas.models
     Column(Modifier.fillMaxSize().background(EditorTheme.panel)) {
         if (models == null) {
-            Txt(
-                if (world == null) "Open a world to see its textures." else "The textures of \"${world.name}\" are not loaded yet. Switch to Textured mode (3), or wait for the mods to load.",
-                Modifier.padding(16.dp), color = EditorTheme.textDim, size = 13.sp, maxLines = 3,
-            )
+            Txt(atlasMissingText(world?.name), Modifier.padding(16.dp), color = EditorTheme.textDim, size = 13.sp, maxLines = 3)
             return@Column
         }
-        Atlas(state, models, world!!.name)
+        AtlasGrid(state, atlas, models, world!!.name)
     }
 }
 
+private fun atlasMissingText(worldName: String?) =
+    if (worldName == null) "Open a world to see its textures."
+    else "The textures of \"$worldName\" are not loaded yet. Switch to Textured mode (3), or wait for the mods to load."
+
 @Composable
-private fun Atlas(state: EditorState, models: BlockModels, worldName: String) {
-    val assets = models.assets
-    val all = remember(models) { assets.blockTextures.values.flatten().distinct().sortedWith(compareBy({ it.substringBefore(':') != "minecraft" }, { it })) }
-    val byMod = remember(all) { all.groupBy { it.substringBefore(':') } }
-    var mod by remember(models) { mutableStateOf<String?>(null) }
-    var query by remember { mutableStateOf("") }
-    var sizeIndex by remember { mutableStateOf(1) }
-    var selected by remember(models) { mutableStateOf<String?>(null) }
-    val scope = rememberCoroutineScope()
-    val thumbs = rememberThumbs()(models)!!
-
-    val q = query.trim().lowercase()
-    val shown = (mod?.let { byMod[it] } ?: all).let { list -> if (q.isEmpty()) list else list.filter { q in it.lowercase() } }
+private fun AtlasGrid(state: EditorState, atlas: AtlasState, models: BlockModels, worldName: String) {
+    val shown = atlas.shown
     val groups = shown.groupBy { it.substringBefore(':') }
-
-    Row(Modifier.fillMaxSize()) {
-        // The mods, with their number of textures.
-        Column(Modifier.width(220.dp).fillMaxHeight().background(EditorTheme.toolbar)) {
-            Txt("MODS", Modifier.padding(start = 12.dp, top = 10.dp, bottom = 6.dp), color = EditorTheme.textFaint, size = 11.sp, weight = FontWeight.SemiBold)
-            val list = rememberLazyListState()
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                LazyColumn(Modifier.fillMaxSize().padding(end = 8.dp), list) {
-                    item { ModRow("All", all.size, mod == null) { mod = null } }
-                    items(byMod.keys.toList()) { name -> ModRow(name, byMod.getValue(name).size, mod == name) { mod = name } }
-                }
-                VerticalScrollbar(rememberScrollbarAdapter(list), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+    val thumbs = atlas.thumbs ?: return
+    val scope = rememberCoroutineScope()
+    Column(Modifier.fillMaxSize().padding(12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Txt("${shown.size} textures · $worldName", Modifier.weight(1f).padding(end = 12.dp), color = EditorTheme.textDim, size = 12.sp)
+            Box(Modifier.width(160.dp)) { Segmented(SIZES.indices.toList(), atlas.sizeIndex, { SIZE_LABELS[it] }) { atlas.sizeIndex = it } }
+            Spacer(Modifier.width(8.dp))
+            WithTooltip("Save the ${shown.size} textures shown into a folder, laid out like a resource pack") {
+                TextButton("Export shown…", enabled = shown.isNotEmpty()) { TextureExport.exportMany(state, scope, models, shown) }
             }
         }
-        Column(Modifier.weight(1f).fillMaxHeight().padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Txt("${shown.size} textures · $worldName", Modifier.padding(end = 12.dp), color = EditorTheme.textDim, size = 12.sp)
-                Box(Modifier.weight(1f)) {
-                    TextInput(query, { query = it }, Modifier.fillMaxWidth())
-                    if (query.isEmpty()) Txt("Filter by name or mod", Modifier.align(Alignment.CenterStart).padding(start = 10.dp), color = EditorTheme.textFaint, size = 12.sp)
-                }
-                Spacer(Modifier.width(8.dp))
-                Box(Modifier.width(160.dp)) { Segmented(SIZES.indices.toList(), sizeIndex, { SIZE_LABELS[it] }) { sizeIndex = it } }
-                Spacer(Modifier.width(8.dp))
-                WithTooltip("Save the ${shown.size} textures shown into a folder, laid out like a resource pack") {
-                    TextButton("Export shown…", enabled = shown.isNotEmpty()) { TextureExport.exportMany(state, scope, models, shown) }
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            val cell = SIZES[sizeIndex].dp
-            val grid = rememberLazyGridState()
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                LazyVerticalGrid(GridCells.Adaptive(cell + 14.dp), Modifier.fillMaxSize().padding(end = 10.dp), grid) {
-                    for ((name, ids) in groups) {
-                        item(key = "mod:$name", span = { GridItemSpan(maxLineSpan) }) {
-                            Txt("${name.uppercase()} · ${ids.size}", Modifier.padding(top = 10.dp, bottom = 4.dp, start = 3.dp), color = EditorTheme.textFaint, size = 11.sp, weight = FontWeight.SemiBold)
-                        }
-                        items(ids, key = { it }) { id ->
-                            var menuAt by remember { mutableStateOf<IntOffset?>(null) }
-                            val current = id == selected
-                            WithTooltip(id) {
-                                Column(
-                                    Modifier.padding(3.dp).clip(RoundedCornerShape(4.dp))
-                                        .background(if (current) EditorTheme.accentSoft else EditorTheme.panelRaised)
-                                        .border(1.dp, if (current) EditorTheme.accent else Color.Transparent, RoundedCornerShape(4.dp))
-                                        .clickable { selected = id }
-                                        .onRightClick(id) {
-                                            selected = id
-                                            menuAt = it
-                                        }
-                                        .padding(4.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                ) {
-                                    menuAt?.let { at -> ContextMenu(at, textureMenu(state, scope, models, id, shown, { mod = id.substringBefore(':') })) { menuAt = null } }
-                                    Thumb(thumbs, id, null, cell)
-                                    Txt(id.substringAfterLast('/'), Modifier.width(cell), color = EditorTheme.textDim, size = 9.sp)
-                                }
+        Spacer(Modifier.height(10.dp))
+        val cell = SIZES[atlas.sizeIndex].dp
+        val grid = rememberLazyGridState()
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            LazyVerticalGrid(GridCells.Adaptive(cell + 14.dp), Modifier.fillMaxSize().padding(end = 10.dp), grid) {
+                for ((name, ids) in groups) {
+                    item(key = "mod:$name", span = { GridItemSpan(maxLineSpan) }) {
+                        Txt("${name.uppercase()} · ${ids.size}", Modifier.padding(top = 10.dp, bottom = 4.dp, start = 3.dp), color = EditorTheme.textFaint, size = 11.sp, weight = FontWeight.SemiBold)
+                    }
+                    items(ids, key = { it }) { id ->
+                        var menuAt by remember { mutableStateOf<IntOffset?>(null) }
+                        val current = id == atlas.selected
+                        WithTooltip(id) {
+                            Column(
+                                Modifier.padding(3.dp).clip(RoundedCornerShape(4.dp))
+                                    .background(if (current) EditorTheme.accentSoft else EditorTheme.panelRaised)
+                                    .border(1.dp, if (current) EditorTheme.accent else Color.Transparent, RoundedCornerShape(4.dp))
+                                    .clickable { atlas.selected = id }
+                                    .onRightClick(id) {
+                                        atlas.selected = id
+                                        menuAt = it
+                                    }
+                                    .padding(4.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                menuAt?.let { at -> ContextMenu(at, textureMenu(state, scope, models, id, shown, { atlas.mod = id.substringBefore(':') })) { menuAt = null } }
+                                Thumb(thumbs, id, null, cell)
+                                Txt(id.substringAfterLast('/'), Modifier.width(cell), color = EditorTheme.textDim, size = 9.sp)
                             }
                         }
                     }
                 }
-                VerticalScrollbar(rememberScrollbarAdapter(grid), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
             }
-            selected?.let { Details(state, models, thumbs, it) }
+            VerticalScrollbar(rememberScrollbarAdapter(grid), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+        }
+    }
+}
+
+/** Left dock of the atlas workspace: the filter and the mods with their number of textures. */
+@Composable
+fun AtlasLeftDock(state: EditorState, modifier: Modifier) {
+    val atlas = state.workspaces.atlas
+    Column(modifier.background(EditorTheme.panel)) {
+        Txt("FILTER", Modifier.padding(start = 12.dp, top = 10.dp, bottom = 6.dp), color = EditorTheme.textDim, size = 11.sp, weight = FontWeight.SemiBold)
+        Box(Modifier.padding(horizontal = 10.dp)) {
+            TextInput(atlas.query, { atlas.query = it }, Modifier.fillMaxWidth())
+            if (atlas.query.isEmpty()) Txt("Filter by name or mod", Modifier.align(Alignment.CenterStart).padding(start = 10.dp), color = EditorTheme.textFaint, size = 12.sp)
+        }
+        Txt("MODS", Modifier.padding(start = 12.dp, top = 14.dp, bottom = 6.dp), color = EditorTheme.textDim, size = 11.sp, weight = FontWeight.SemiBold)
+        val list = rememberLazyListState()
+        val byMod = atlas.byMod
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            LazyColumn(Modifier.fillMaxSize().padding(end = 8.dp), list) {
+                item { ModRow("All", atlas.all.size, atlas.mod == null) { atlas.mod = null } }
+                items(byMod.keys.toList()) { name -> ModRow(name, byMod.getValue(name).size, atlas.mod == name) { atlas.mod = name } }
+            }
+            VerticalScrollbar(rememberScrollbarAdapter(list), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+        }
+    }
+}
+
+/** Right dock of the atlas workspace: the picked texture, big, with where it is from and what to do with it. */
+@Composable
+fun AtlasRightDock(state: EditorState, modifier: Modifier) {
+    val atlas = state.workspaces.atlas
+    ToolWindow("Texture", onClose = { state.rightDockVisible = false }, modifier) {
+        val models = atlas.models
+        val thumbs = atlas.thumbs
+        val id = atlas.selected
+        if (models == null || thumbs == null || id == null) {
+            Txt("Pick a texture to see where it is from.", Modifier.padding(12.dp), color = EditorTheme.textDim, size = 12.sp, maxLines = 3)
+        } else {
+            Details(state, models, thumbs, id)
         }
     }
 }
@@ -201,28 +181,20 @@ private fun ModRow(name: String, count: Int, selected: Boolean, onClick: () -> U
     }
 }
 
-/** The picked texture, big, with where it is from and what to do with it. */
 @Composable
 private fun Details(state: EditorState, models: BlockModels, thumbs: ThumbCache, id: String) {
     val assets = models.assets
     val texture = remember(id) { models.texture(id) }
     val archive = assets.index["assets/${id.substringBefore(':')}/textures/${id.substringBefore('#').substringAfter(':')}.png"]?.let { assets.files[it].fileName.toString() }
-    Spacer(Modifier.height(8.dp))
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).background(EditorTheme.panelRaised).padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Thumb(thumbs, id, null, 96.dp)
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Txt(id, size = 13.sp, mono = true, weight = FontWeight.SemiBold)
-            Txt(listOfNotNull(texture?.let { "${it.size}×${it.size} px" }, archive?.let { "from $it" }).joinToString(" · "), color = EditorTheme.textDim, size = 12.sp)
-        }
-        Row(horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
-            TextButton("Export PNG…") { TextureExport.exportOne(state, models, id) }
-            TextButton("Export ×${TextureExport.ENLARGED}…") { TextureExport.exportOne(state, models, id, TextureExport.ENLARGED) }
-            TextButton("Copy name") { state.copyText(id) }
-        }
+    Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Thumb(thumbs, id, null, 128.dp)
+        Spacer(Modifier.height(4.dp))
+        Txt(id, size = 13.sp, mono = true, weight = FontWeight.SemiBold, maxLines = 3)
+        Txt(listOfNotNull(texture?.let { "${it.size}×${it.size} px" }, archive?.let { "from $it" }).joinToString(" · "), color = EditorTheme.textDim, size = 12.sp, maxLines = 3)
+        Spacer(Modifier.height(6.dp))
+        TextButton("Export PNG…") { TextureExport.exportOne(state, models, id) }
+        TextButton("Export ×${TextureExport.ENLARGED}…") { TextureExport.exportOne(state, models, id, TextureExport.ENLARGED) }
+        TextButton("Copy name") { state.copyText(id) }
     }
 }
 

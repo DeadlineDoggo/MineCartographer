@@ -46,6 +46,7 @@ import minecartographer.core.project.WorldTextures
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import minecartographer.AppInfo
+import minecartographer.ui.FileDialogs
 import minecartographer.viewport.ChunkTileCache
 import minecartographer.viewport.IsoView
 import minecartographer.textures.AssetSource
@@ -671,26 +672,32 @@ class EditorState {
         analyzeRequest = null
     }
 
-    /** What the main area shows: the map, or the texture atlas that opens beside it as a tab. */
-    var mainTab by mutableStateOf(MainTab.Map)
-        private set
+    /** The tabs of the main area and what each one owns (the map is this class, for now). */
+    val workspaces = Workspaces()
 
-    /** The Texture atlas tab is open (the Map tab always is). */
-    var atlasOpen by mutableStateOf(false)
-        private set
+    fun openAtlas() = workspaces.openAtlas()
 
-    fun openAtlas() {
-        atlasOpen = true
-        mainTab = MainTab.Atlas
+    fun closeAtlas() = workspaces.close(Workspace.Atlas)
+
+    /** Closes a tab. A model with unsaved changes asks first; models can't be saved yet, so this is the last chance to copy its JSON. */
+    fun closeWorkspace(workspace: Workspace) {
+        val model = (workspace as? Workspace.Model)?.let(workspaces::modelOf)
+        if (model?.dirty == true && !FileDialogs.confirmDiscard(model.name)) return
+        workspaces.close(workspace)
     }
 
-    fun closeAtlas() {
-        atlasOpen = false
-        mainTab = MainTab.Map
-    }
+    /** The list of models to open, while it is shown. */
+    var modelPickerVisible by mutableStateOf(false)
 
-    fun showMainTab(tab: MainTab) {
-        if (tab == MainTab.Map || atlasOpen) mainTab = tab
+    /** Opens the block model [id] of the active world's packs in a new model tab. */
+    fun openModelFromAssets(id: String) {
+        val source = activeWorld?.let(::modelsOf)?.sourceModel(id)
+        if (source == null) {
+            notice = Notice("Could not read the model $id.", warning = true)
+            return
+        }
+        modelPickerVisible = false
+        workspaces.openModel(source)
     }
 
     /** The right-click menu on the map, while it is open. */
@@ -1548,8 +1555,6 @@ class EditorState {
 }
 
 /** The tabs over the main area. The map can't be closed. */
-enum class MainTab { Map, Atlas }
-
 /** Which layers the Analyze panel reads in each chunk. */
 enum class AnalyzeScope(val label: String) {
     /** The top visible layer: what the map shows and the export writes. */

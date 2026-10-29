@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,7 +42,9 @@ import kotlinx.coroutines.delay
 import minecartographer.core.edit.BaseLayer
 import minecartographer.editor.DockTab
 import minecartographer.editor.EditorState
-import minecartographer.editor.MainTab
+import minecartographer.editor.Notice
+import minecartographer.editor.Workspace
+import minecartographer.model.ModelEditorState
 import minecartographer.editor.Tool
 import minecartographer.editor.WorldLibrary
 import minecartographer.editor.newProjectInteractive
@@ -75,44 +78,69 @@ fun EditorShell(state: EditorState, onExit: () -> Unit) {
     StartScreen(state)
     ExportDialog(state)
     WorldInfoDialog(state)
+    ModelPickerDialog(state)
 }
 
 @Composable
 private fun EditorLayout(state: EditorState, onExit: () -> Unit) {
     Column(Modifier.fillMaxSize().background(EditorTheme.window)) {
+        val workspace = state.workspaces.active
         MenuRow(state, onExit)
         HDivider()
-        Toolbar(state)
+        val model = (workspace as? Workspace.Model)?.let(state.workspaces::modelOf)
+        when {
+            workspace == Workspace.Map -> Toolbar(state)
+            model != null -> DockToolbar(state) { ModelToolbar(model) }
+            else -> DockToolbar(state)
+        }
         HDivider()
         Row(Modifier.fillMaxWidth().weight(1f)) {
-            Toolbox(state)
-            VDivider()
+            if (workspace == Workspace.Map) {
+                Toolbox(state)
+                VDivider()
+            } else if (model != null) {
+                ModelToolbox(model)
+                VDivider()
+            }
             if (state.leftDockVisible) {
-                LeftDock(state, Modifier.width(state.leftDockWidth).fillMaxHeight())
+                val dock = Modifier.width(state.leftDockWidth).fillMaxHeight()
+                when {
+                    workspace == Workspace.Map -> LeftDock(state, dock)
+                    model != null -> ModelLeftDock(state, model, dock)
+                    else -> AtlasLeftDock(state, dock)
+                }
                 Splitter { state.leftDockWidth = (state.leftDockWidth + it).coerceIn(MIN_DOCK_WIDTH, MAX_DOCK_WIDTH) }
             }
             Column(Modifier.weight(1f).fillMaxHeight()) {
-                // The tabs appear with the atlas: the map is one of them and stays.
-                if (state.atlasOpen) MainTabs(state)
+                WorkspaceTabs(state)
                 Box(Modifier.weight(1f).fillMaxWidth()) {
-                    if (state.mainTab == MainTab.Atlas) AtlasView(state) else {
-                        ChunkViewport(state, Modifier.fillMaxSize())
-                        ViewportOverlay(state)
-                        ModsDrawer(state)
-                        AnalyzeDrawer(state)
-                        BlockMappingDrawer(state)
-                        MapContextMenu(state)
+                    when (workspace) {
+                        Workspace.Map -> {
+                            ChunkViewport(state, Modifier.fillMaxSize())
+                            ViewportOverlay(state)
+                            ModsDrawer(state)
+                            AnalyzeDrawer(state)
+                            BlockMappingDrawer(state)
+                            MapContextMenu(state)
+                            HelpOverlay(state)
+                        }
+                        Workspace.Atlas -> AtlasView(state)
+                        is Workspace.Model -> ModelWorkspaceView(state, workspace)
                     }
-                    HelpOverlay(state)
                 }
             }
             if (state.rightDockVisible) {
                 Splitter { state.rightDockWidth = (state.rightDockWidth - it).coerceIn(MIN_DOCK_WIDTH, MAX_DOCK_WIDTH) }
-                RightDock(state, Modifier.width(state.rightDockWidth).fillMaxHeight())
+                val dock = Modifier.width(state.rightDockWidth).fillMaxHeight()
+                when {
+                    workspace == Workspace.Map -> RightDock(state, dock)
+                    model != null -> ModelRightDock(state, model, dock)
+                    else -> AtlasRightDock(state, dock)
+                }
             }
         }
         HDivider()
-        StatusBar(state)
+        StatusBar(state, workspace)
     }
 }
 
@@ -127,7 +155,28 @@ private fun MenuRow(state: EditorState, onExit: () -> Unit) {
     }
 }
 
-private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = listOf(
+private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> {
+    val map = state.workspaces.active == Workspace.Map
+    val model = (state.workspaces.active as? Workspace.Model)?.let(state.workspaces::modelOf)
+    return buildList {
+        add(fileMenu(state, onExit))
+        if (map) {
+            add(editMenu(state))
+            add(selectMenu(state))
+            add(layerMenu(state))
+        }
+        if (model != null) {
+            add(modelEditMenu(model))
+            add(elementMenu(model))
+            add(modelMenu(state, model))
+        }
+        add(viewMenu(state, map))
+        if (map) add(toolsMenu(state))
+        add(helpMenu(state))
+    }
+}
+
+private fun fileMenu(state: EditorState, onExit: () -> Unit) =
     Menu("File") {
         val world = state.activeWorld
         val recent = WorldLibrary.recentProjects().filter { it != state.projectFile }.take(10)
@@ -150,7 +199,9 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             MenuSeparator,
             MenuItem("Exit", "Alt+F4", action = onExit),
         )
-    },
+    }
+
+private fun editMenu(state: EditorState) =
     Menu("Edit") {
         val has = state.selection.isNotEmpty()
         listOf(
@@ -166,7 +217,9 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             MenuItem("Clear from active layer", "Del", has) { state.clearSelected() },
             MenuItem("Restore original chunks", enabled = has) { state.restoreOriginal() },
         )
-    },
+    }
+
+private fun selectMenu(state: EditorState) =
     Menu("Select") {
         listOf(
             MenuItem("All", "Ctrl+A") { state.selectAll() },
@@ -177,7 +230,9 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             MenuSeparator,
             MenuItem("Analyze selection…", enabled = state.selection.isNotEmpty(), checked = state.analyzeVisible) { state.toggleAnalyze() },
         )
-    },
+    }
+
+private fun layerMenu(state: EditorState) =
     Menu("Layer") {
         val stack = state.activeStack
         val active = stack?.active
@@ -201,47 +256,110 @@ private fun editorMenus(state: EditorState, onExit: () -> Unit): List<Menu> = li
             MenuItem("Visible", checked = active?.visible == true, enabled = active != null) { active?.let { state.toggleVisible(it.id) } },
             MenuItem("Locked", checked = active?.locked == true, enabled = active != null) { active?.let { state.toggleLocked(it.id) } },
         )
-    },
+    }
+
+/** The map's view commands first, then what every workspace shares: its tabs and docks. */
+private fun viewMenu(state: EditorState, map: Boolean) =
     Menu("View") {
         val s = state.renderSettings
+        val atlasShown = state.workspaces.active == Workspace.Atlas
+        buildList {
+            if (map) {
+                add(MenuItem("Zoom in", "+") { state.zoomBy(1.25) })
+                add(MenuItem("Zoom out", "-") { state.zoomBy(0.8) })
+                add(MenuItem("Fit world", "F") { state.fitToWorld() })
+                add(MenuItem("Rotate left", ",") { state.rotate(-1) })
+                add(MenuItem("Rotate right", ".") { state.rotate(+1) })
+                add(MenuSeparator)
+                RenderMode.entries.forEachIndexed { i, mode ->
+                    add(MenuItem("${mode.label} mode", "${i + 1}", checked = s.mode == mode) { state.setRenderMode(mode) })
+                }
+                add(MenuItem("2D from above", "V", checked = s.flat) { state.setFlat(!s.flat) })
+                add(MenuSeparator)
+            }
+            add(MenuItem("Texture atlas", checked = atlasShown, enabled = state.activeWorld != null) {
+                if (atlasShown) state.closeAtlas() else state.openAtlas()
+            })
+            add(MenuItem("Mods & textures…", enabled = (state.activeWorld as? minecartographer.core.anvil.AnvilWorld)?.info?.forge != null) { state.modsPanelVisible = true })
+            add(MenuSeparator)
+            if (map) {
+                add(MenuItem("Chunk borders", checked = s.chunkBorders) { state.updateRenderSettings(s.copy(chunkBorders = !s.chunkBorders)) })
+                add(MenuItem("Layer colors", checked = state.showLayerColors) { state.showLayerColors = !state.showLayerColors })
+                add(MenuSeparator)
+            }
+            add(MenuItem("Left dock", checked = state.leftDockVisible) { state.leftDockVisible = !state.leftDockVisible })
+            add(MenuItem(if (map) "Layers dock" else "Right dock", checked = state.rightDockVisible) { state.rightDockVisible = !state.rightDockVisible })
+            if (map) {
+                add(MenuItem("Inspector", checked = state.inspectorVisible) {
+                    state.inspectorVisible = !state.inspectorVisible
+                    if (state.inspectorVisible) state.rightDockVisible = true
+                })
+            }
+        }
+    }
+
+private fun modelEditMenu(model: ModelEditorState) =
+    Menu("Edit") {
+        val has = model.selection.isNotEmpty()
         listOf(
-            MenuItem("Zoom in", "+") { state.zoomBy(1.25) },
-            MenuItem("Zoom out", "-") { state.zoomBy(0.8) },
-            MenuItem("Fit world", "F") { state.fitToWorld() },
-            MenuItem("Rotate left", ",") { state.rotate(-1) },
-            MenuItem("Rotate right", ".") { state.rotate(+1) },
+            MenuItem(model.undoLabel?.let { "Undo $it" } ?: "Undo", "Ctrl+Z", model.canUndo) { model.undo() },
+            MenuItem(model.redoLabel?.let { "Redo $it" } ?: "Redo", "Ctrl+Y", model.canRedo) { model.redo() },
             MenuSeparator,
-            *RenderMode.entries.mapIndexed { i, mode ->
-                MenuItem("${mode.label} mode", "${i + 1}", checked = s.mode == mode) { state.setRenderMode(mode) }
-            }.toTypedArray(),
-            MenuItem("2D from above", "V", checked = s.flat) { state.setFlat(!s.flat) },
+            MenuItem("Duplicate", "Ctrl+D", has) { model.duplicateSelected() },
+            MenuItem("Delete", "Del", has) { model.deleteSelected() },
             MenuSeparator,
-            MenuItem("Texture atlas", checked = state.mainTab == MainTab.Atlas, enabled = state.activeWorld != null) {
-                if (state.mainTab == MainTab.Atlas) state.closeAtlas() else state.openAtlas()
-            },
-            MenuItem("Mods & textures…", enabled = (state.activeWorld as? minecartographer.core.anvil.AnvilWorld)?.info?.forge != null) { state.modsPanelVisible = true },
-            MenuSeparator,
-            MenuItem("Chunk borders", checked = s.chunkBorders) { state.updateRenderSettings(s.copy(chunkBorders = !s.chunkBorders)) },
-            MenuItem("Layer colors", checked = state.showLayerColors) { state.showLayerColors = !state.showLayerColors },
-            MenuSeparator,
-            MenuItem("Left dock", checked = state.leftDockVisible) { state.leftDockVisible = !state.leftDockVisible },
-            MenuItem("Layers dock", checked = state.rightDockVisible) { state.rightDockVisible = !state.rightDockVisible },
-            MenuItem("Inspector", checked = state.inspectorVisible) {
-                state.inspectorVisible = !state.inspectorVisible
-                if (state.inspectorVisible) state.rightDockVisible = true
-            },
+            MenuItem("Select all", "Ctrl+A", model.doc.elements.isNotEmpty()) { model.selectAll() },
+            MenuItem("Select none", "Esc", has) { model.clearSelection() },
         )
-    },
+    }
+
+private fun elementMenu(model: ModelEditorState) =
+    Menu("Element") {
+        val has = model.selection.isNotEmpty()
+        listOf(
+            MenuItem("Add cube", "N") { model.addCube() },
+            MenuSeparator,
+            MenuItem("Mirror across X", enabled = has) { model.mirrorSelected(0) },
+            MenuItem("Mirror across Y", enabled = has) { model.mirrorSelected(1) },
+            MenuItem("Mirror across Z", enabled = has) { model.mirrorSelected(2) },
+            MenuSeparator,
+            MenuItem("Move left", "Left", has) { model.nudge(0, -model.snap) },
+            MenuItem("Move right", "Right", has) { model.nudge(0, model.snap) },
+            MenuItem("Move up", "PgUp", has) { model.nudge(1, model.snap) },
+            MenuItem("Move down", "PgDn", has) { model.nudge(1, -model.snap) },
+            MenuItem("Move back", "Up", has) { model.nudge(2, -model.snap) },
+            MenuItem("Move forward", "Down", has) { model.nudge(2, model.snap) },
+            MenuSeparator,
+            MenuItem("Show all", enabled = model.hidden.isNotEmpty()) { model.hidden = emptySet() },
+        )
+    }
+
+private fun modelMenu(state: EditorState, model: ModelEditorState) =
+    Menu("Model") {
+        listOf(
+            MenuItem("Open model from the world…", enabled = state.activeWorld != null) { state.modelPickerVisible = true },
+            MenuItem("Copy JSON", enabled = model.doc.elements.isNotEmpty()) {
+                state.copyText(model.doc.toJson())
+                state.notice = Notice("Copied the model JSON.")
+            },
+            MenuSeparator,
+            MenuItem("Add texture") { model.addTextureVariable() },
+            MenuItem("Reset view") { model.resetView() },
+        )
+    }
+
+private fun toolsMenu(state: EditorState) =
     Menu("Tools") {
         Tool.entries.map { t -> MenuItem(t.label, t.keyLabel, checked = state.tool == t) { state.selectTool(t) } }
-    },
+    }
+
+private fun helpMenu(state: EditorState) =
     Menu("Help") {
         listOf(
             MenuItem("Shortcuts & quick tips", "F1", checked = state.helpVisible) { state.helpVisible = !state.helpVisible },
             MenuItem("Start screen") { state.startScreenVisible = true },
         )
-    },
-)
+    }
 
 /** Quick actions; everything here is also in the menus. */
 @Composable
@@ -268,9 +386,27 @@ private fun Toolbar(state: EditorState) {
         IconButton(Icons.Fit, "Fit world (F)") { state.fitToWorld() }
 
         Spacer(Modifier.weight(1f))
-        IconButton(Icons.Settings, "Left dock", selected = state.leftDockVisible) { state.leftDockVisible = !state.leftDockVisible }
-        IconButton(Icons.Layers, "Layers dock", selected = state.rightDockVisible) { state.rightDockVisible = !state.rightDockVisible }
+        DockToggles(state)
     }
+}
+
+/** The toolbar of the workspaces that have no quick actions of their own yet: just the dock switches. */
+@Composable
+private fun DockToolbar(state: EditorState, actions: @Composable RowScope.() -> Unit = {}) {
+    Row(
+        Modifier.fillMaxWidth().height(40.dp).background(EditorTheme.toolbar).padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        actions()
+        Spacer(Modifier.weight(1f))
+        DockToggles(state)
+    }
+}
+
+@Composable
+private fun DockToggles(state: EditorState) {
+    IconButton(Icons.Settings, "Left dock", selected = state.leftDockVisible) { state.leftDockVisible = !state.leftDockVisible }
+    IconButton(Icons.Layers, "Right dock", selected = state.rightDockVisible) { state.rightDockVisible = !state.rightDockVisible }
 }
 
 @Composable
@@ -462,11 +598,32 @@ private fun RoundButton(icon: EditorIcon, tooltip: String, modifier: Modifier, o
 }
 
 @Composable
-private fun StatusBar(state: EditorState) {
+private fun StatusBar(state: EditorState, workspace: Workspace) {
     Row(
         Modifier.fillMaxWidth().height(26.dp).background(EditorTheme.toolbar).padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        when (workspace) {
+            Workspace.Map -> MapStatus(state)
+            Workspace.Atlas -> {
+                val atlas = state.workspaces.atlas
+                val world = state.activeWorld
+                Pill(if (world == null) "No world" else "${world.name} · ${world.versionLabel}")
+                VDivider(Modifier.height(14.dp))
+                Pill("${atlas.shown.size} of ${atlas.all.size} textures")
+                atlas.selected?.let {
+                    VDivider(Modifier.height(14.dp))
+                    Pill(it)
+                }
+            }
+            is Workspace.Model -> state.workspaces.modelOf(workspace)?.let { ModelStatus(it) }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.MapStatus(state: EditorState) {
+    run {
         val world = state.activeWorld
         Pill(if (world == null) "No world" else "${world.name} · ${world.versionLabel}")
         VDivider(Modifier.height(14.dp))

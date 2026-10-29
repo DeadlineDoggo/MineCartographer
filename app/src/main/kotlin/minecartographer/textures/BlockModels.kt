@@ -33,6 +33,9 @@ object Dir {
     val DZ = intArrayOf(0, 0, -1, 1, 0, 0)
 
     fun of(dx: Int, dy: Int, dz: Int): Int = (0 until 6).first { DX[it] == dx && DY[it] == dy && DZ[it] == dz }
+
+    /** The axis a direction lies on: 0 x (west, east), 1 y (down, up), 2 z (north, south). */
+    fun axisOf(dir: Int): Int = if (DX[dir] != 0) 0 else if (DY[dir] != 0) 1 else 2
 }
 
 /** A square texture with its mip levels, premultiplied ARGB. */
@@ -247,6 +250,13 @@ class AssetSource(val files: List<Path>, cachedIndex: Map<String, Int>? = null) 
     private companion object {
         // models/: blocks drawn by the mod's own renderer (BiblioCraft) have their textures there.
         val BLOCK_PNG = Regex("""assets/([^/]+)/textures/(blocks?|models)/(.+)\.png""")
+        val MODEL_JSON = Regex("""assets/([^/]+)/models/((?:blocks?)/.+)\.json""")
+    }
+
+    /** Ids of the block models (`ns:block/name`; `ns:name` before 1.9, `blocks` folders included), sorted, vanilla first. */
+    val modelIds: List<String> by lazy {
+        index.keys.mapNotNull { path -> MODEL_JSON.matchEntire(path)?.let { "${it.groupValues[1]}:${it.groupValues[2]}" } }
+            .sortedWith(compareBy({ it.substringBefore(':') != "minecraft" }, { it }))
     }
 
     /** The archive at [i] in [files], opened when first asked (class scans of 1.6 mods read their classes). */
@@ -293,6 +303,9 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
     private class Optional<T>(val value: T?)
 
     private class ResolvedModel(val textures: Map<String, String>, val elements: List<Map<String, Any?>>?)
+
+    /** A model with its parents folded in: what the model editor starts from. [elements] is empty for models drawn by the game's code. */
+    fun sourceModel(id: String): SourceModel? = resolve(id)?.let { SourceModel(id, it.textures, it.elements.orEmpty()) }
 
     override fun model(state: BlockState, turns: Int): BlockModel {
         val t = Rotation.normalize(turns)
@@ -724,6 +737,9 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
             if (':' in id) id.substringBefore(':') to id.substringAfter(':') else "minecraft" to id
     }
 }
+
+/** A block model as written in the assets, parents merged: texture variables and element JSON. */
+class SourceModel(val id: String, val textures: Map<String, String>, val elements: List<Map<String, Any?>>)
 
 /** Default biome colors for tinted blocks (Minecraft's plains values); biomes themselves are not read. */
 object Tints {
