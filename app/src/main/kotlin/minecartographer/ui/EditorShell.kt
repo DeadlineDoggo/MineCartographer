@@ -124,11 +124,12 @@ private fun EditorLayout(state: EditorState, onExit: () -> Unit) {
                             AnalyzeDrawer(state)
                             BlockMappingDrawer(state)
                             MapContextMenu(state)
-                            HelpOverlay(state)
                         }
                         Workspace.Atlas -> AtlasView(state)
                         is Workspace.Model -> ModelWorkspaceView(state, workspace)
                     }
+                    // A layer of its own over whichever tab is shown, so F1 gives the same help everywhere.
+                    HelpOverlay(state)
                 }
             }
             if (state.rightDockVisible) {

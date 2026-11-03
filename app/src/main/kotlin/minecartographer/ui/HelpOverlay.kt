@@ -34,7 +34,7 @@ private class Group(val title: String, val entries: List<Entry>)
 
 private val TIPS = listOf(
     "Your save is never changed. Edits live in layers; export writes a new world.",
-    "Middle drag moves the view with every tool, so you never have to switch to Move view.",
+    "On the map the middle button moves the view with every tool, so you never have to switch to Move view.",
     "Right-click the selection, a chunk or a layer for what you can do with it, like Analyze.",
     "Shift adds to a selection, Ctrl subtracts from it while you brush or drag a rectangle.",
     "Paste always makes a new layer: move it, hide it or delete it without touching the original.",
@@ -42,11 +42,14 @@ private val TIPS = listOf(
     "Textured mode draws real block models. Modded worlds before 1.8 are guessed; fix blocks in View → Mods & textures.",
     "Rescan (View tab) rebuilds every texture cache if results look stale.",
     "View → Texture atlas shows every texture of the mods in a tab; right-click a texture to export it.",
-    "Save project keeps your layers, texture picks and mod folders; export is the finished world.",
+    "Save project keeps your layers, texture picks and mod folders and the open model tabs; export is the finished world.",
+    "The + beside the tabs opens a new model, a model from the world or the texture atlas.",
+    "In a model tab the middle button turns the view, and Shift with it moves the view, like in Blender.",
+    "A rotation beyond 45 degrees turns the box itself, because the game's model format only allows -45 to 45 on one axis. The lock next to Angle allows any angle.",
 )
 
 private fun groups(): List<Group> = listOf(
-    Group("MOVING AROUND", listOf(
+    Group("MAP: MOVING AROUND", listOf(
         Entry("W A S D / arrows", "Move the view"),
         Entry("Middle drag", "Move the view"),
         Entry("Right click", "Menu for the chunk or selection"),
@@ -57,15 +60,15 @@ private fun groups(): List<Group> = listOf(
         Entry("1 / 2 / 3", "Map / Blocks / Textured mode"),
         Entry("V", "2D from above / 3D"),
     )),
-    Group("TOOLS", Tool.entries.map { Entry(it.keyLabel, "${it.label}: ${it.hint}") }),
-    Group("SELECTING", listOf(
+    Group("MAP: TOOLS", Tool.entries.map { Entry(it.keyLabel, "${it.label}: ${it.hint}") }),
+    Group("MAP: SELECTING", listOf(
         Entry("Shift + click / drag", "Add to the selection"),
         Entry("Ctrl + click / drag", "Subtract from the selection"),
         Entry("Ctrl+A / Ctrl+Shift+A", "Select all / none"),
         Entry("Ctrl+I", "Invert the selection"),
         Entry("Esc", "Clear the selection or cancel a paste"),
     )),
-    Group("EDITING", listOf(
+    Group("MAP: EDITING", listOf(
         Entry("Ctrl+Z / Ctrl+Y", "Undo / redo"),
         Entry("Ctrl+C / Ctrl+X", "Copy / cut the selection"),
         Entry("Ctrl+Shift+C", "Copy everything visible"),
@@ -74,12 +77,26 @@ private fun groups(): List<Group> = listOf(
         Entry("Shift + click", "Keep placing the paste again"),
         Entry("Delete", "Clear the selection from the active layer"),
     )),
-    Group("LAYERS", listOf(
+    Group("MAP: LAYERS", listOf(
         Entry("Ctrl+Shift+N", "New layer"),
         Entry("Ctrl+Shift+D", "Duplicate layer"),
         Entry("PgUp / PgDn", "Raise / lower the layer"),
         Entry("Ctrl+E", "Merge down"),
         Entry("Ctrl+Shift+E", "Flatten the world"),
+    )),
+    Group("MODEL EDITOR", listOf(
+        Entry("Q / W / E / R", "Select / Move / Rotate / Resize"),
+        Entry("N", "Add a cube"),
+        Entry("Ctrl+D", "Duplicate the picked elements"),
+        Entry("Delete", "Delete the picked elements"),
+        Entry("Ctrl+A / Esc", "Pick all / pick none"),
+        Entry("Arrows / PgUp / PgDn", "Nudge the picked elements by the snap step"),
+        Entry("Ctrl+Z / Ctrl+Y", "Undo / redo"),
+        Entry("Middle drag", "Turn the view"),
+        Entry("Shift + middle drag", "Move the view"),
+        Entry("Mouse wheel", "Zoom"),
+        Entry("F", "Back to the isometric view"),
+        Entry("Shift + click", "Add an element to the picked ones"),
     )),
     Group("FILES", listOf(
         Entry("Ctrl+O", "Open a world folder"),
@@ -88,11 +105,12 @@ private fun groups(): List<Group> = listOf(
         Entry("Ctrl+S", "Save the project"),
         Entry("Ctrl+Alt+S", "Save the project as…"),
         Entry("Ctrl+Shift+S", "Export the merged world"),
+        Entry("File menu", "Export model… in a model tab"),
         Entry("F1", "This help"),
     )),
 )
 
-/** Shortcuts and quick tips in a card at the top of the map; folds with ×, Esc or F1. */
+/** Shortcuts and quick tips in a card at the top of the main area, over any tab; folds with ×, Esc or F1. */
 @Composable
 fun BoxScope.HelpOverlay(state: EditorState) {
     if (!state.helpVisible) return
