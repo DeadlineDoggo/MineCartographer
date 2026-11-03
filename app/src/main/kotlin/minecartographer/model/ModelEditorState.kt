@@ -50,6 +50,12 @@ class ModelEditorState(val id: Int, name: String) {
     var camera by mutableStateOf(ModelCamera.ISO)
     var shading by mutableStateOf(ModelShading.Solid)
 
+    /** The floor grid, the block outlines and the axes at the origin. */
+    var showGrid by mutableStateOf(true)
+
+    /** The names of the world directions lying on the floor beside each side of the grid. */
+    var showSides by mutableStateOf(true)
+
     /**
      * Unlocked: element rotations may have any angle, as some loaders read them. Locked (the default): only what the
      * game's own parser takes, multiples of 22.5 within -45..45, and more is worked into the box ([QuarterTurns]).
