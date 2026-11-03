@@ -7,6 +7,7 @@ import androidx.compose.ui.input.key.Key
 import minecartographer.core.edit.UndoHistory
 import minecartographer.textures.Dir
 import minecartographer.textures.SourceModel
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 enum class ModelTool(val label: String, val key: Key, val keyLabel: String, val hint: String) {
@@ -49,6 +50,12 @@ class ModelEditorState(val id: Int, name: String) {
     var camera by mutableStateOf(ModelCamera.ISO)
     var shading by mutableStateOf(ModelShading.Solid)
 
+    /**
+     * Unlocked: element rotations may have any angle, as some loaders read them. Locked (the default): only what the
+     * game's own parser takes, multiples of 22.5 within -45..45, and more is worked into the box ([QuarterTurns]).
+     */
+    var freeAngles by mutableStateOf(false)
+
     /** The texture variable whose texture is being chosen from the atlas, while that window is open. */
     var pickingTexture by mutableStateOf<String?>(null)
 
@@ -71,6 +78,8 @@ class ModelEditorState(val id: Int, name: String) {
     fun load(source: SourceModel) {
         doc = ModelDoc.from(source)
         origin = source.id
+        // A model that already has other angles keeps them: editing it must not round them away.
+        freeAngles = doc.elements.any { e -> e.rotation?.angle?.let { !isGameAngle(it) } == true }
         selection = emptySet()
         face = null
         hidden = emptySet()
@@ -216,15 +225,25 @@ class ModelEditorState(val id: Int, name: String) {
         })
     }
 
-    /** Turns the picked elements about [axis] by [degrees] from where the drag began; Minecraft allows -45..45 in steps of 22.5. */
+    /**
+     * Turns the picked elements about [axis] by [degrees] from where the drag began, in steps of 22.5. The game only
+     * takes -45..45 on one axis, so what goes beyond is worked into the box (see [QuarterTurns]).
+     */
     fun dragRotate(axis: Int, degrees: Float) {
         val base = gestureBase ?: return
         live(base.update(selection) { e ->
             val old = e.rotation?.takeIf { it.axis == axis }
-            val angle = (((old?.angle ?: 0f) + degrees) / 22.5f).roundToInt() * 22.5f
-            e.copy(rotation = ElementRotation(axis, angle.coerceIn(-45f, 45f), e.rotation?.origin ?: e.center, e.rotation?.rescale ?: false))
+            val total = (old?.angle ?: 0f) + degrees
+            // Unlocked, the drag goes in half degrees.
+            if (freeAngles) e.withAngle(axis, (total * 2).roundToInt() / 2f) else QuarterTurns.withAngle(e, axis, total)
         })
     }
+
+    /** Sets the angle of the picked elements' rotation about [axis]; locked, an angle beyond 45 turns the box itself. */
+    fun setAngle(axis: Int, angle: Float) = edit("Rotate") { if (freeAngles) it.withAngle(axis, angle) else QuarterTurns.withAngle(it, axis, angle) }
+
+    private fun ModelElement.withAngle(axis: Int, angle: Float) =
+        copy(rotation = ElementRotation(axis, angle, rotation?.origin ?: center, rotation?.rescale ?: false))
 
     // ---- textures and faces ----
 
@@ -273,6 +292,9 @@ class ModelEditorState(val id: Int, name: String) {
     }
 
     companion object {
+        /** An angle the game's parser takes: -45, -22.5, 0, 22.5 or 45. */
+        fun isGameAngle(angle: Float) = abs(angle) <= 45f && abs(angle / 22.5f - (angle / 22.5f).roundToInt()) < 1e-3f
+
         const val MIN_COORD = -16f
         const val MAX_COORD = 32f
         const val MIN_SIZE = 0f

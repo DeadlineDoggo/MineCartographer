@@ -144,6 +144,31 @@ class ModelEditorTest {
     }
 
     @Test
+    fun `unlocked, an element can have any angle, and a model with such angles opens unlocked`() {
+        val model = ModelEditorState(1, "m")
+        model.addCube()
+        val id = model.selection.single()
+        assertFalse(model.freeAngles, "locked by default")
+        model.setAngle(1, 30f)
+        assertEquals(22.5f, model.doc.element(id)!!.rotation!!.angle, "locked: snapped to what the game takes")
+        model.freeAngles = true
+        model.setAngle(1, 30f)
+        assertEquals(30f, model.doc.element(id)!!.rotation!!.angle)
+        model.beginGesture()
+        model.dragRotate(1, 40.3f)
+        model.endGesture("Rotate")
+        assertEquals(70.5f, model.doc.element(id)!!.rotation!!.angle, "no 45 limit and no snap, only half degrees")
+
+        val source = minecartographer.textures.SourceModel(
+            "m:block/x", emptyMap(),
+            listOf(mapOf("from" to listOf(0.0, 0.0, 0.0), "to" to listOf(4.0, 4.0, 4.0), "rotation" to mapOf("origin" to listOf(2.0, 2.0, 2.0), "axis" to "y", "angle" to -30.0), "faces" to emptyMap<String, Any>())),
+        )
+        val opened = ModelEditorState(2, "x").also { it.load(source) }
+        assertTrue(opened.freeAngles, "-30 is not a game angle: keep it as it is")
+        assertTrue(ModelEditorState.isGameAngle(-22.5f) && ModelEditorState.isGameAngle(45f) && !ModelEditorState.isGameAngle(67.5f) && !ModelEditorState.isGameAngle(15f))
+    }
+
+    @Test
     fun `an unchanged drag leaves no undo step`() {
         val model = ModelEditorState(1, "m")
         model.addCube()

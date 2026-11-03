@@ -181,8 +181,19 @@ fun ModelRightDock(state: EditorState, model: ModelEditorState, modifier: Modifi
                 model.edit("Rotate") { it.copy(rotation = ElementRotation(axis, it.rotation?.angle ?: 0f, it.rotation?.origin ?: it.center, it.rotation?.rescale ?: false)) }
             }
             Spacer(Modifier.height(4.dp))
-            NumberRow("Angle", listOf(""), listOf(r?.angle ?: 0f)) { _, v ->
-                model.edit("Rotate") { it.copy(rotation = ElementRotation(it.rotation?.axis ?: 1, v.coerceIn(-45f, 45f), it.rotation?.origin ?: it.center, it.rotation?.rescale ?: false)) }
+            val odd = r != null && !ModelEditorState.isGameAngle(r.angle)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) { NumberRow("Angle", listOf(""), listOf(r?.angle ?: 0f)) { _, v -> model.setAngle(r?.axis ?: 1, v) } }
+                Spacer(Modifier.width(4.dp))
+                IconButton(
+                    if (model.freeAngles) Icons.Unlock else Icons.Lock,
+                    when {
+                        !model.freeAngles -> "Locked: the game's parser only takes multiples of 22.5° from -45 to 45; more turns the box itself. Click to allow any angle."
+                        odd -> "Unlocked: any angle. The game's own parser rejects ${formatNumber(r!!.angle)}°; only some loaders take it. Click to lock."
+                        else -> "Unlocked: any angle, though the game's own parser only takes multiples of 22.5° within -45..45. Click to lock."
+                    },
+                    selected = !model.freeAngles, size = 26.dp, iconSize = 14.dp,
+                ) { model.freeAngles = !model.freeAngles }
             }
             if (r != null) {
                 Spacer(Modifier.height(4.dp))
