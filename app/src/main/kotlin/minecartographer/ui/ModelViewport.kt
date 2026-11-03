@@ -115,7 +115,7 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
                                 startX = p.x; startY = p.y; lastX = p.x; lastY = p.y
                                 moved = false
                                 when {
-                                    b.isTertiaryPressed -> drag = Drag.Pan
+                                    b.isTertiaryPressed -> drag = if (event.keyboardModifiers.isShiftPressed) Drag.Pan else Drag.Orbit
                                     b.isSecondaryPressed -> drag = Drag.Orbit
                                     b.isPrimaryPressed -> {
                                         handle = latestHandles.firstOrNull { hypot(it.x - p.x, it.y - p.y) <= GRAB }
