@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Matrix
@@ -93,7 +94,8 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
     val latestFrame by rememberUpdatedState(frame)
     val latestSize by rememberUpdatedState(size)
 
-    Box(modifier.background(Color(0xFF26282C)).onSizeChanged { size = it }) {
+    // The grid, the axes and the names are wider than the view when zoomed in: they stop at its edge.
+    Box(modifier.clipToBounds().background(Color(0xFF26282C)).onSizeChanged { size = it }) {
         Canvas(
             Modifier.fillMaxSize().pointerInput(model) {
                 awaitPointerEventScope {
