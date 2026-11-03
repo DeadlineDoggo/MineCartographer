@@ -48,7 +48,10 @@ import minecartographer.textures.Dir
 @Composable
 fun ModelWorkspaceView(state: EditorState, workspace: Workspace.Model) {
     val model = state.workspaces.modelOf(workspace) ?: return
-    ModelViewport(state, model, Modifier.fillMaxSize())
+    Box(Modifier.fillMaxSize()) {
+        ModelViewport(state, model, Modifier.fillMaxSize())
+        NoticeToast(state, Modifier.align(Alignment.BottomCenter).padding(bottom = 36.dp))
+    }
 }
 
 private fun toolIcon(tool: ModelTool) = when (tool) {

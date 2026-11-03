@@ -686,6 +686,9 @@ class EditorState {
         workspaces.close(workspace)
     }
 
+    /** The export window of the shown model tab. */
+    var modelExportVisible by mutableStateOf(false)
+
     /** The list of models to open, while it is shown. */
     var modelPickerVisible by mutableStateOf(false)
 

@@ -79,6 +79,7 @@ fun EditorShell(state: EditorState, onExit: () -> Unit) {
     ExportDialog(state)
     WorldInfoDialog(state)
     ModelPickerDialog(state)
+    ModelExportDialog(state)
     state.workspaces.activeModel()?.let { TexturePickerDialog(state, it) }
 }
 
@@ -191,6 +192,10 @@ private fun fileMenu(state: EditorState, onExit: () -> Unit) =
             }, enabled = recent.isNotEmpty() && !state.busy),
             MenuItem("Save project", "Ctrl+S", state.worlds.isNotEmpty()) { state.saveProjectInteractive() },
             MenuItem("Save project as…", "Ctrl+Alt+S", state.worlds.isNotEmpty()) { state.saveProjectInteractive(saveAs = true) },
+            // Only with a model tab shown: the way out of the model editor.
+            *(state.workspaces.activeModel()?.let { model ->
+                arrayOf<MenuEntry>(MenuItem("Export model…", enabled = model.doc.elements.isNotEmpty()) { state.modelExportVisible = true })
+            } ?: emptyArray()),
             MenuSeparator,
             MenuItem("Open world folder…", "Ctrl+O", !state.busy) { FileDialogs.chooseWorldFolder()?.let(state::openWorldFolder) },
             MenuItem("Open demo worlds", enabled = !state.busy) { state.openDemo() },
@@ -532,7 +537,7 @@ private fun BoxScope.ViewportOverlay(state: EditorState) {
 }
 
 @Composable
-private fun NoticeToast(state: EditorState, modifier: Modifier) {
+internal fun NoticeToast(state: EditorState, modifier: Modifier) {
     val notice = state.notice ?: return
     LaunchedEffect(notice) {
         delay(if (notice.warning) 5000 else 2500)
