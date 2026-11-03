@@ -79,6 +79,7 @@ fun EditorShell(state: EditorState, onExit: () -> Unit) {
     ExportDialog(state)
     WorldInfoDialog(state)
     ModelPickerDialog(state)
+    state.workspaces.activeModel()?.let { TexturePickerDialog(state, it) }
 }
 
 @Composable

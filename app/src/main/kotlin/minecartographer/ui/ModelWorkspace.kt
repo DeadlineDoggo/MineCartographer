@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -93,16 +94,26 @@ fun ModelLeftDock(state: EditorState, model: ModelEditorState, modifier: Modifie
         HDivider()
         Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp)) {
             Txt("TEXTURES", color = EditorTheme.textDim, size = 11.sp, weight = FontWeight.SemiBold)
-            Spacer(Modifier.height(6.dp))
+            Txt("Click a preview to choose from the textures of the world.", Modifier.padding(top = 2.dp, bottom = 6.dp), color = EditorTheme.textFaint, size = 11.sp, maxLines = 2)
+            val thumbs = rememberThumbs()(state.activeWorld?.let(state::modelsOf))
             for ((variable, id) in model.doc.textures) {
-                Column(Modifier.padding(bottom = 8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CommitInput("#$variable", { model.renameTexture(variable, it) }, Modifier.weight(1f), mono = true)
-                        Spacer(Modifier.width(4.dp))
-                        IconButton(Icons.Close, "Remove #$variable", size = 24.dp, iconSize = 10.dp) { model.removeTextureVariable(variable) }
+                Row(Modifier.padding(bottom = 8.dp)) {
+                    val resolved = model.doc.resolve("#$variable")
+                    WithTooltip("Choose a texture for #$variable") {
+                        Box(Modifier.size(44.dp).clip(RoundedCornerShape(4.dp)).background(EditorTheme.panelRaised).clickable { model.pickingTexture = variable }, contentAlignment = Alignment.Center) {
+                            if (thumbs != null && resolved != null) Thumb(thumbs, resolved, null, 44.dp) else Txt("?", color = EditorTheme.textFaint, size = 14.sp)
+                        }
                     }
-                    Spacer(Modifier.height(3.dp))
-                    CommitInput(id, { model.setTexture(variable, it.trim()) }, Modifier.fillMaxWidth(), mono = true)
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CommitInput("#$variable", { model.renameTexture(variable, it) }, Modifier.weight(1f), mono = true)
+                            Spacer(Modifier.width(4.dp))
+                            IconButton(Icons.Close, "Remove #$variable", size = 24.dp, iconSize = 10.dp) { model.removeTextureVariable(variable) }
+                        }
+                        Spacer(Modifier.height(3.dp))
+                        CommitInput(id, { model.setTexture(variable, it.trim()) }, Modifier.fillMaxWidth(), mono = true)
+                    }
                 }
             }
             TextButton("Add texture") { model.addTextureVariable() }

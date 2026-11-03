@@ -49,6 +49,9 @@ class ModelEditorState(val id: Int, name: String) {
     var camera by mutableStateOf(ModelCamera.ISO)
     var shading by mutableStateOf(ModelShading.Solid)
 
+    /** The texture variable whose texture is being chosen from the atlas, while that window is open. */
+    var pickingTexture by mutableStateOf<String?>(null)
+
     /** Unsaved changes: shown as a dot on the tab and asked about when it is closed. */
     var dirty by mutableStateOf(false)
 

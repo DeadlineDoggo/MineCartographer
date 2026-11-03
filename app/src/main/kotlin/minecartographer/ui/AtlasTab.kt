@@ -125,7 +125,7 @@ private fun AtlasGrid(state: EditorState, atlas: AtlasState, models: BlockModels
                     }
                 }
             }
-            VerticalScrollbar(rememberScrollbarAdapter(grid), Modifier.align(Alignment.CenterEnd).fillMaxHeight())
+            ItemScrollbar(grid, Modifier.align(Alignment.CenterEnd))
         }
     }
 }
