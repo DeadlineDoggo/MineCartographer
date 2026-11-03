@@ -23,25 +23,25 @@ class NativeDialogsTest {
     @Test
     fun `kdialog opens several files in a folder that starts with a dot`() {
         assertEquals(
-            listOf("kdialog", "--title", "Textures", "--multiple", "--separate-output", "--getopenfilename", "/home/me/.minecraft/", "*.jar *.zip|Packs"),
+            listOf("kdialog", "--title", "Textures", "--multiple", "--separate-output", "--getopenfilename", "${textures.start}/", "*.jar *.zip|Packs"),
             NativeDialogs.kdialogCommand(textures),
         )
     }
 
     @Test
     fun `kdialog picks a folder and saves a named file`() {
-        assertEquals(listOf("kdialog", "--title", "World", "--getexistingdirectory", "/home/me/.minecraft/saves/"), NativeDialogs.kdialogCommand(folder))
-        assertEquals(listOf("kdialog", "--title", "Save", "--getsavefilename", "/home/me/a.csv", "*.csv|CSV"), NativeDialogs.kdialogCommand(save))
+        assertEquals(listOf("kdialog", "--title", "World", "--getexistingdirectory", "${folder.start}/"), NativeDialogs.kdialogCommand(folder))
+        assertEquals(listOf("kdialog", "--title", "Save", "--getsavefilename", "${save.start!!.resolve("a.csv")}", "*.csv|CSV"), NativeDialogs.kdialogCommand(save))
     }
 
     @Test
     fun `zenity asks for the same things`() {
         val files = NativeDialogs.gtkCommand(textures, "zenity")
-        assertEquals(listOf("zenity", "--file-selection", "--title=Textures", "--multiple", "--separator=\n", "--filename=/home/me/.minecraft/"), files.take(6))
+        assertEquals(listOf("zenity", "--file-selection", "--title=Textures", "--multiple", "--separator=\n", "--filename=${textures.start}/"), files.take(6))
         assertTrue("--file-filter=Packs | *.jar *.JAR *.zip *.ZIP" in files)
         assertTrue("--directory" in NativeDialogs.gtkCommand(folder, "zenity"))
         val saving = NativeDialogs.gtkCommand(save, "zenity")
-        assertTrue("--save" in saving && "--filename=/home/me/a.csv" in saving)
+        assertTrue("--save" in saving && "--filename=${save.start!!.resolve("a.csv")}" in saving)
     }
 
     @Test
