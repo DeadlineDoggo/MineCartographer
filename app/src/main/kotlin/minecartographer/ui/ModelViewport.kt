@@ -179,7 +179,8 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
                 drawGrid(camera, w, h, cells)
                 drawAxes(camera, w, h, measurer)
             }
-            if (model.showSides) drawSideLabels(camera, w, h, cells, measurer)
+            // The grid is the master: with it off, the names of the directions go too.
+            if (model.showGrid && model.showSides) drawSideLabels(camera, w, h, cells, measurer)
             if (model.shading != ModelShading.Wireframe) bitmap?.let { drawImage(it) }
             // Plain solid shading hides what is behind a face; the wire shadings show every edge through the walls.
             val hideBehind = if (model.shading == ModelShading.Solid) frame else null
@@ -198,14 +199,19 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
         ViewPresets(model, Modifier.align(Alignment.BottomStart).padding(12.dp))
         Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xCC2B2D30)).padding(4.dp)) {
-                IconButton(Icons.Grid, if (model.showGrid) "Hide the grid and the axes" else "Show the grid and the axes", selected = model.showGrid, size = 30.dp, iconSize = 16.dp) {
+                IconButton(Icons.Grid, if (model.showGrid) "Hide the grid, the axes and the world directions" else "Show the grid, the axes and the world directions", selected = model.showGrid, size = 30.dp, iconSize = 16.dp) {
                     model.showGrid = !model.showGrid
                 }
             }
             Box(Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xCC2B2D30)).padding(4.dp)) {
                 IconButton(
-                    Icons.Directions, if (model.showSides) "Hide the world directions on the floor" else "Show the world directions (north, south, west, east) on the floor",
-                    selected = model.showSides, size = 30.dp, iconSize = 16.dp,
+                    Icons.Directions,
+                    when {
+                        !model.showGrid -> "The world directions belong to the grid: show the grid first"
+                        model.showSides -> "Hide the world directions on the floor"
+                        else -> "Show the world directions (north, south, west, east) on the floor"
+                    },
+                    selected = model.showSides && model.showGrid, enabled = model.showGrid, size = 30.dp, iconSize = 16.dp,
                 ) { model.showSides = !model.showSides }
             }
             ShadingSwitcher(model, Modifier)
