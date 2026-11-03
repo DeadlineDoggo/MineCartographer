@@ -25,6 +25,8 @@ new world. Your original saves are only read, never modified.
 - **Analyze a selection or a layer:** every block in it, how many, which are modded, and what each
   one becomes in the world it goes into.
 - **Texture atlas:** every texture of your mods and packs on one page, with export to PNG.
+- **Model editor:** open any block model of your mods and packs, change its elements, faces and
+  textures in a 3D view, and export it as a resource pack.
 - **Tools** to move a layer, erase chunks and pick the layer under the cursor.
 - **Copy and paste between worlds**, at the cursor or at the original coordinates.
 - **Non-destructive edits** with full undo/redo. Erasing in the original world only hides
@@ -126,6 +128,46 @@ its name, or export everything shown into a folder laid out like a resource pack
 
 ![The texture atlas](docs/texture-atlas.png)
 
+## Model editor
+
+The **+** beside the tabs opens a new empty model, a block model of the active world's packs and
+mods (every model in them, with its parents folded in), or the texture atlas. A model tab has its
+own toolbox, docks, menus and undo history: the elements on the left with the texture variables
+below them, the picked element on the right.
+
+Pick elements and faces in the 3D view and move, rotate or resize them with the arrows, rings and
+face arrows of the tools (Q, W, E, R), snapped to whole, half or quarter pixels. Add, duplicate,
+mirror and delete elements, and edit positions, rotation, faces, UVs, cull faces and tints in
+numbers. The view can show Wireframe, Solid or Solid + wire, a grid under every block the model
+reaches into, the axes, and the names of the four directions on the floor. The middle button
+turns the view and Shift with it moves the view, as in Blender.
+
+![Editing a model](docs/model-editor.png)
+
+![Rotating an element](docs/model-gizmos.png)
+
+Minecraft's model format allows only -45 to 45 degrees, in steps of 22.5, on one axis per element.
+A rotation beyond that turns the box itself, with its faces and textures, so the model looks the
+same. The lock beside the angle lifts the limit, for models that already use other angles, which
+only some loaders read. A cull face tells the game not to draw a face when a full block is next to
+it in that direction.
+
+Click the preview of a texture variable to choose another texture from everything the world's packs
+and mods have.
+
+![Choosing a texture](docs/model-texture-picker.png)
+
+**File → Export model…** (with a model tab shown) writes the model as a resource pack, in a folder
+or a zip, or as the model file with a `textures` folder beside it. The textures it uses are copied
+out of the packs and mods, optionally moved into your own namespace so they can't clash with those
+of their mods, and the pack format follows the Minecraft version you pick. The window lists the
+files before anything is written. The packs and mods themselves are never changed.
+
+![The export window](docs/model-export.png)
+
+Open model tabs are saved in the project, with their models and view settings. Only block models
+are supported: no blockstates, item models or entity models yet.
+
 ## Limitations
 
 - Only the overworld is merged. The Nether, the End, player data and maps are copied from the
@@ -189,7 +231,7 @@ on GitHub Actions and attaches them to a draft release.
 
 **File → Save project** (Ctrl+S) stores the current workspace in a `.mcproj` file: which worlds
 are open, every layer with its chunks, each world's textures, the selection, the camera, the render
-mode and the dock layout. **File → Open project…** (Ctrl+Shift+O) brings all of it back, and
+mode, the dock layout and the open model tabs with their models. **File → Open project…** (Ctrl+Shift+O) brings all of it back, and
 **File → Recent projects** lists the last ones.
 
 For each world the project also remembers the client jar its textures came from (the "core"
@@ -253,6 +295,9 @@ The file is plain XML, so you can read it or keep it in version control:
 | PgUp / PgDn | Raise / lower the active layer |
 | Ctrl+E, Ctrl+Shift+E | Merge down, flatten |
 | Ctrl+Z, Ctrl+Y | Undo, redo |
+| Q, W, E, R | In a model tab: select, move, rotate, resize |
+| N, Ctrl+D, Del | In a model tab: add a cube, duplicate, delete the picked elements |
+| Middle drag, Shift + middle drag | In a model tab: turn, move the view |
 | Ctrl+N, Ctrl+Shift+O | New project, open project |
 | Ctrl+S, Ctrl+Alt+S | Save project, save project as |
 | Ctrl+O, Ctrl+Shift+S | Open world, export |
