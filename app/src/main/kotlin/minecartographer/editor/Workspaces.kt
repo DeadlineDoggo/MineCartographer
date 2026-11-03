@@ -2,9 +2,11 @@ package minecartographer.editor
 
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import minecartographer.model.ModelDoc
 import minecartographer.model.ModelEditorState
 import minecartographer.textures.BlockModels
 import minecartographer.textures.SourceModel
@@ -34,6 +36,42 @@ class Workspaces {
 
     val atlas = AtlasState()
 
+    /** Counts the model tabs opened and closed: they are part of a project, the atlas is not. */
+    var tabsRevision by mutableIntStateOf(0)
+        private set
+
+    val anyModelDirty: Boolean get() = models.values.any { it.dirty }
+
+    /** The models were just written to a project. */
+    fun markModelsSaved() {
+        for (m in models.values) m.dirty = false
+    }
+
+    /** Back to just the map: a new project, or one about to bring its own tabs. */
+    fun reset() {
+        open.clear()
+        open += Workspace.Map
+        models.clear()
+        atlas.clear()
+        active = Workspace.Map
+        tabsRevision++
+    }
+
+    /** A model tab as a project saved it; the tab shown is not changed. */
+    fun restoreModel(name: String, origin: String?, doc: ModelDoc, settings: Map<String, String>): Workspace.Model {
+        val id = nextModelId++
+        models[id] = ModelEditorState(id, name).also { it.restore(doc, origin, settings) }
+        val workspace = Workspace.Model(id)
+        open += workspace
+        tabsRevision++
+        return workspace
+    }
+
+    /** The atlas tab, opened without being shown. */
+    fun addAtlas() {
+        if (Workspace.Atlas !in open) open += Workspace.Atlas
+    }
+
     private val models = HashMap<Int, ModelEditorState>()
     private var nextModelId = 1
 
@@ -56,6 +94,7 @@ class Workspaces {
         val workspace = Workspace.Model(id)
         models[id] = ModelEditorState(id, "Untitled model${if (id > 1) " $id" else ""}")
         open += workspace
+        tabsRevision++
         active = workspace
         return workspace
     }
@@ -76,7 +115,10 @@ class Workspaces {
         val index = open.indexOf(workspace)
         if (index < 0) return
         open.removeAt(index)
-        if (workspace is Workspace.Model) models.remove(workspace.id)
+        if (workspace is Workspace.Model) {
+            models.remove(workspace.id)
+            tabsRevision++
+        }
         if (workspace == Workspace.Atlas) atlas.clear()
         if (active == workspace) active = open.getOrElse(index - 1) { Workspace.Map }
     }

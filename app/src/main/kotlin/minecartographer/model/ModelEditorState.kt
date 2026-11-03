@@ -95,6 +95,40 @@ class ModelEditorState(val id: Int, name: String) {
         revision++
     }
 
+    /** The view and tool settings of this tab as plain text, for a project file. */
+    fun settings(): Map<String, String> = linkedMapOf(
+        "camera" to listOf(camera.yaw, camera.pitch, camera.zoom, camera.panX, camera.panY).joinToString(","),
+        "tool" to tool.name,
+        "snap" to snap.toString(),
+        "shading" to shading.name,
+        "grid" to showGrid.toString(),
+        "sides" to showSides.toString(),
+        "free-angles" to freeAngles.toString(),
+        // By position in the list, which a saved model keeps.
+        "hidden" to doc.elements.withIndex().filter { it.value.id in hidden }.joinToString(",") { it.index.toString() },
+    )
+
+    /** Puts a saved model back: its [document], where it came from and the [settings] that [settings] wrote. Nothing is unsaved. */
+    fun restore(document: ModelDoc, origin: String?, settings: Map<String, String>) {
+        doc = document
+        this.origin = origin
+        selection = emptySet()
+        face = null
+        history.removeIf { true }
+        settings["camera"]?.split(',')?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 5 }?.let {
+            camera = ModelCamera(it[0], it[1], it[2], it[3], it[4])
+        }
+        ModelTool.entries.firstOrNull { it.name == settings["tool"] }?.let { tool = it }
+        settings["snap"]?.toFloatOrNull()?.takeIf { it > 0f }?.let { snap = it }
+        ModelShading.entries.firstOrNull { it.name == settings["shading"] }?.let { shading = it }
+        settings["grid"]?.toBooleanStrictOrNull()?.let { showGrid = it }
+        settings["sides"]?.toBooleanStrictOrNull()?.let { showSides = it }
+        freeAngles = settings["free-angles"]?.toBooleanStrictOrNull() ?: document.elements.any { e -> e.rotation?.angle?.let { !isGameAngle(it) } == true }
+        hidden = settings["hidden"].orEmpty().split(',').mapNotNull { it.toIntOrNull() }.mapNotNull { document.elements.getOrNull(it)?.id }.toSet()
+        dirty = false
+        revision++
+    }
+
     // ---- selection ----
 
     fun select(id: Int, add: Boolean = false, face: Int? = null) {

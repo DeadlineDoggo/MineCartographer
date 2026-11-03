@@ -41,6 +41,8 @@ import minecartographer.core.edit.UndoHistory
 import minecartographer.core.project.ProjectDocument
 import minecartographer.core.project.ProjectFile
 import minecartographer.core.project.ProjectSnapshot
+import minecartographer.core.project.ProjectTab
+import minecartographer.model.ModelDoc
 import minecartographer.core.project.WorldLocation
 import minecartographer.core.project.WorldTextures
 import kotlinx.coroutines.sync.Mutex
@@ -679,7 +681,7 @@ class EditorState {
 
     fun closeAtlas() = workspaces.close(Workspace.Atlas)
 
-    /** Closes a tab. A model with unsaved changes asks first; models can't be saved yet, so this is the last chance to copy its JSON. */
+    /** Closes a tab. A model with changes the project has not saved asks first. */
     fun closeWorkspace(workspace: Workspace) {
         val model = (workspace as? Workspace.Model)?.let(workspaces::modelOf)
         if (model?.dirty == true && !FileDialogs.confirmDiscard(model.name)) return
@@ -1299,19 +1301,52 @@ class EditorState {
         private set
     private var changeCount by mutableIntStateOf(0)
     private var savedChangeCount by mutableIntStateOf(0)
+    private var savedTabsRevision by mutableIntStateOf(0)
 
-    /** True when worlds or layers changed since the project was last saved, opened or created. */
-    val projectDirty: Boolean get() = changeCount != savedChangeCount
+    /** True when worlds, layers or the models in their tabs changed since the project was last saved, opened or created. */
+    val projectDirty: Boolean get() = changeCount != savedChangeCount || workspaces.tabsRevision != savedTabsRevision || workspaces.anyModelDirty
     val projectName: String get() = projectFile?.fileName?.toString()?.removeSuffix(".${ProjectFile.EXTENSION}") ?: "Untitled"
 
     private fun changed() { changeCount++ }
 
     /** Treats the current worlds and layers as saved (e.g. the demo worlds shown at startup). */
-    fun markSaved() { savedChangeCount = changeCount }
+    fun markSaved() {
+        savedChangeCount = changeCount
+        savedTabsRevision = workspaces.tabsRevision
+        workspaces.markModelsSaved()
+    }
+
+    /** The open tabs for a project file; just the map is not worth writing. */
+    private fun tabsSnapshot(): Pair<List<ProjectTab>, Int?> {
+        val open = workspaces.open.toList()
+        if (open == listOf<Workspace>(Workspace.Map)) return emptyList<ProjectTab>() to null
+        val tabs = open.map { w ->
+            when (w) {
+                Workspace.Map -> ProjectTab("map")
+                Workspace.Atlas -> ProjectTab("atlas")
+                is Workspace.Model -> workspaces.modelOf(w)?.let { ProjectTab("model", it.name, it.origin, it.doc.toJson(), it.settings()) } ?: ProjectTab("map")
+            }
+        }
+        return tabs to open.indexOf(workspaces.active).takeIf { it >= 0 }
+    }
+
+    /** Opens the tabs a project saved, with the models in them; a project from before tabs were kept just has the map. */
+    private fun restoreTabs(tabs: List<ProjectTab>, active: Int?) {
+        workspaces.reset()
+        val restored = tabs.map { tab ->
+            when (tab.kind) {
+                "atlas" -> Workspace.Atlas.also { workspaces.addAtlas() }
+                "model" -> ModelDoc.parse(tab.json)?.let { workspaces.restoreModel(tab.name.ifBlank { "Model" }, tab.origin, it, tab.settings) }
+                else -> Workspace.Map
+            }
+        }
+        workspaces.show(active?.let { restored.getOrNull(it) } ?: Workspace.Map)
+    }
 
     /** Writes the project to [file]; returns false (with a message) when that fails. */
     fun saveProject(file: Path): Boolean {
-        val snapshot = ProjectSnapshot(worlds.mapNotNull { stacks[it.id] }, activeWorld, selection, editorSettings(), worlds.associateWith(::texturesOf))
+        val (tabs, activeTab) = tabsSnapshot()
+        val snapshot = ProjectSnapshot(worlds.mapNotNull { stacks[it.id] }, activeWorld, selection, editorSettings(), worlds.associateWith(::texturesOf), tabs, activeTab)
         return runCatching { ProjectFile.write(file, snapshot, AppInfo.version) }
             .onSuccess {
                 projectFile = file
@@ -1326,6 +1361,7 @@ class EditorState {
     /** Closes every world and starts an empty, unsaved project. */
     fun newProject() {
         replaceWorlds(emptyList())
+        workspaces.reset()
         projectFile = null
         loading = null
         markSaved()
@@ -1384,6 +1420,7 @@ class EditorState {
             selection = doc.selection.filterTo(HashSet(), ::isSelectable)
             restoreCamera(doc.editor)
         }
+        restoreTabs(doc.tabs, doc.activeTab)
         markSaved()
         notify(
             when {

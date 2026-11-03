@@ -118,6 +118,31 @@ class ProjectFileTest {
     }
 
     @Test
+    fun `open tabs and the models in them come back as they were`() {
+        // Model JSON has quotes, angle brackets, ampersands and line breaks: none of it may change on the way.
+        val json = "{\n  \"textures\": { \"a\": \"x:block/<&>\" },\n  \"elements\": []\n}"
+        val tabs = listOf(
+            ProjectTab("map"),
+            ProjectTab("atlas"),
+            ProjectTab("model", "bed & <breakfast>", "railways:block/bed", json, mapOf("camera" to "35.0,28.0,18.0,0.0,0.0", "hidden" to "")),
+            ProjectTab("model", "second"),
+        )
+        ProjectFile.write(file, ProjectSnapshot(listOf(edited()), valley, emptySet(), emptyMap(), tabs = tabs, activeTab = 2), "test")
+        val doc = ProjectFile.read(file)
+        assertEquals(tabs.map { if (it.kind == "model") it.copy(json = it.json.trim()) else it }, doc.tabs)
+        assertEquals(2, doc.activeTab)
+    }
+
+    @Test
+    fun `a project from before tabs were kept has none`() {
+        ProjectFile.write(file, ProjectSnapshot(listOf(edited()), valley, emptySet(), emptyMap()), "test")
+        val doc = ProjectFile.read(file)
+        assertEquals(emptyList(), doc.tabs)
+        assertEquals(null, doc.activeTab)
+        assertTrue("<tabs" !in file.readText(), "nothing is written when there is nothing to keep")
+    }
+
+    @Test
     fun `the file is readable XML`() {
         ProjectFile.write(file, ProjectSnapshot(listOf(edited()), valley, emptySet(), emptyMap()), "test")
         val text = file.readText()

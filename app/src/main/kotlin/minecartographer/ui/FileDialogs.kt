@@ -161,7 +161,7 @@ object FileDialogs {
     fun confirmDiscard(name: String): Boolean {
         platformLook
         val answer = JOptionPane.showConfirmDialog(
-            null, "\"$name\" has changes that are not saved anywhere yet (models can't be saved in this version).\nUse Model > Copy JSON first if you want to keep them.\n\nClose it anyway?",
+            null, "\"$name\" has changes that are not in a saved project yet.\nClosing the tab drops the model from the project.\n\nSave the project first (File > Save project) if you want to keep the changes. Close it anyway?",
             "Close model", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE,
         )
         return answer == JOptionPane.YES_OPTION

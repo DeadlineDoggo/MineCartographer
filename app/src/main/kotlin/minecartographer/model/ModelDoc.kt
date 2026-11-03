@@ -145,6 +145,15 @@ data class ModelDoc(
     }
 
     companion object {
+        /** A document from model JSON, as [toJson] writes it; null when it is not a model. */
+        fun parse(json: String): ModelDoc? {
+            val map = runCatching { minecartographer.textures.Json.parse(json) }.getOrNull() as? Map<*, *> ?: return null
+            val textures = (map["textures"] as? Map<*, *>).orEmpty().entries.mapNotNull { (k, v) -> if (k is String && v is String) k to v else null }.toMap()
+            @Suppress("UNCHECKED_CAST")
+            val elements = (map["elements"] as? List<*>).orEmpty().filterIsInstance<Map<String, Any?>>()
+            return from(SourceModel("project", textures, elements))
+        }
+
         fun from(source: SourceModel): ModelDoc {
             var id = 1
             val elements = source.elements.mapIndexed { i, json ->
