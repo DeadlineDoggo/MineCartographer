@@ -52,14 +52,6 @@ import kotlin.math.hypot
 import kotlin.math.pow
 import kotlin.math.sin
 
-private val AXIS_COLORS = listOf(Color(0xFFE5534B), Color(0xFF6CC46C), Color(0xFF4A9EE8))
-private const val GRAB = 11f
-private const val GIZMO_REACH = 72f
-private const val RING = 64f
-
-/** A handle of the gizmo of the active tool: [index] is an axis (move, rotate) or a face direction (resize). */
-private class Handle(val tool: ModelTool, val index: Int, val x: Float, val y: Float)
-
 private enum class Drag { None, Click, Handle, Orbit, Pan }
 
 /** The 3D view of a model: draws it, picks in it, and carries the gizmos of the tools. */
@@ -85,7 +77,11 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
     val selected = model.selection.let { ids -> doc.elements.filter { it.id in ids } }
     // The edges of every shown element, for the wireframe shading.
     val wire = remember(doc, model.hidden) { doc.elements.filter { it.id !in model.hidden }.map(ModelRenderer::boxEdges) }
-    val handles = remember(selected, model.tool, camera, size) { handlesOf(model, selected, camera, size) }
+    val solid = model.shading == ModelShading.Solid
+    val handles = remember(selected, model.tool, camera, size, solid) { handlesOf(model, selected, camera, size, solid) }
+    // The handle under the pointer, and the one being dragged, are drawn lit.
+    var hovered by remember { mutableStateOf<Handle?>(null) }
+    var dragged by remember { mutableStateOf<Handle?>(null) }
 
     val latestHandles by rememberUpdatedState(handles)
     val latestFrame by rememberUpdatedState(frame)
@@ -102,7 +98,7 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
                     var lastY = 0f
                     var moved = false
                     var handle: Handle? = null
-                    var startAngle = 0.0
+                    var startAngle: Double? = null
                     while (true) {
                         val event = awaitPointerEvent()
                         val change = event.changes.firstOrNull() ?: continue
@@ -122,12 +118,12 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
                                     b.isTertiaryPressed -> drag = if (event.keyboardModifiers.isShiftPressed) Drag.Pan else Drag.Orbit
                                     b.isSecondaryPressed -> drag = Drag.Orbit
                                     b.isPrimaryPressed -> {
-                                        handle = latestHandles.firstOrNull { hypot(it.x - p.x, it.y - p.y) <= GRAB }
+                                        handle = hitHandle(latestHandles, p)
                                         drag = if (handle != null) Drag.Handle else Drag.Click
-                                        if (handle != null) {
+                                        dragged = handle
+                                        handle?.let {
                                             model.beginGesture()
-                                            val c = centerOnScreen(model, model.camera, w, h)
-                                            startAngle = atan2((p.y - c[1]).toDouble(), (p.x - c[0]).toDouble())
+                                            startAngle = if (it.tool == ModelTool.Rotate) planeAngle(model.camera, centerOf(model.selected), it.index, p.x, p.y, w, h) else null
                                         }
                                     }
                                     else -> drag = Drag.None
@@ -144,6 +140,7 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
                                     )
                                     Drag.Pan -> model.camera = model.camera.copy(panX = model.camera.panX + dx, panY = model.camera.panY + dy)
                                     Drag.Handle -> handle?.let { dragHandle(model, it, p.x - startX, p.y - startY, p.x, p.y, startAngle, w, h) }
+                                    Drag.None -> hovered = hitHandle(latestHandles, p)
                                     else -> {}
                                 }
                                 lastX = p.x; lastY = p.y
@@ -157,8 +154,11 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
                                     }
                                     drag = Drag.None
                                     handle = null
+                                    dragged = null
+                                    hovered = hitHandle(latestHandles, p)
                                 }
                             }
+                            PointerEventType.Exit -> hovered = null
                             else -> {}
                         }
                     }
@@ -181,7 +181,7 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
             if (face != null) {
                 for (q in quads) if (q.dir == face && q.element in model.selection) faceOutline(camera, q.quad.corners, w, h, hideBehind)
             }
-            for (hd in handles) drawHandle(hd, selected, camera, w, h)
+            for (hd in handles) drawHandle(hd, lit = hd.sameAs(dragged ?: hovered))
         }
         ViewPresets(model, Modifier.align(Alignment.BottomStart).padding(12.dp))
         ShadingSwitcher(model, Modifier.align(Alignment.TopEnd).padding(12.dp))
@@ -218,71 +218,6 @@ private fun ViewPresets(model: ModelEditorState, modifier: Modifier) {
             TextButton(label) { model.camera = preset.copy(zoom = zoom) }
             Box(Modifier.width(4.dp))
         }
-    }
-}
-
-// ---- gizmos ----
-
-/** The mean center of the picked elements, in model units. */
-private fun centerOf(selected: List<minecartographer.model.ModelElement>): FloatArray {
-    val n = selected.size.coerceAtLeast(1)
-    return floatArrayOf(selected.sumOf { it.center.x.toDouble() }.toFloat() / n, selected.sumOf { it.center.y.toDouble() }.toFloat() / n, selected.sumOf { it.center.z.toDouble() }.toFloat() / n)
-}
-
-private fun centerOnScreen(model: ModelEditorState, camera: ModelCamera, w: Int, h: Int): FloatArray {
-    val c = centerOf(model.selected)
-    return camera.project(c[0], c[1], c[2], w, h)
-}
-
-private fun handlesOf(model: ModelEditorState, selected: List<minecartographer.model.ModelElement>, camera: ModelCamera, size: IntSize): List<Handle> {
-    if (selected.isEmpty() || size.width < 2 || model.tool == ModelTool.Select) return emptyList()
-    val w = size.width
-    val h = size.height
-    val c = centerOf(selected)
-    val s = camera.project(c[0], c[1], c[2], w, h)
-    // An axis pointing at the viewer has no direction on screen to drag along.
-    fun usable(axis: Int) = camera.axisOnScreen(axis).second > camera.zoom * 0.25f
-    return when (model.tool) {
-        ModelTool.Move -> (0..2).filter(::usable).map { a ->
-            val d = camera.axisOnScreen(a).first
-            Handle(ModelTool.Move, a, s[0] + d[0] * GIZMO_REACH, s[1] + d[1] * GIZMO_REACH)
-        }
-        ModelTool.Rotate -> (0..2).map { a ->
-            val angle = Math.toRadians(-90.0 + 120.0 * a)
-            Handle(ModelTool.Rotate, a, s[0] + (cos(angle) * RING).toFloat(), s[1] + (sin(angle) * RING).toFloat())
-        }
-        ModelTool.Resize -> ModelRenderer.faceCenters(selected.first()).withIndex().filter { usable(Dir.axisOf(it.index)) }.map { (dir, p) ->
-            val q = camera.project(p[0], p[1], p[2], w, h)
-            Handle(ModelTool.Resize, dir, q[0], q[1])
-        }
-        ModelTool.Select -> emptyList()
-    }
-}
-
-private fun dragHandle(model: ModelEditorState, handle: Handle, dx: Float, dy: Float, px: Float, py: Float, startAngle: Double, w: Int, h: Int) {
-    val camera = model.camera
-    when (handle.tool) {
-        ModelTool.Move -> {
-            val (d, len) = camera.axisOnScreen(handle.index)
-            model.dragMove(handle.index, (dx * d[0] + dy * d[1]) / len)
-        }
-        ModelTool.Resize -> {
-            val axis = Dir.axisOf(handle.index)
-            val (d, len) = camera.axisOnScreen(axis)
-            model.dragResize(handle.index, (dx * d[0] + dy * d[1]) / len)
-        }
-        ModelTool.Rotate -> {
-            val c = centerOnScreen(model, camera, w, h)
-            var delta = atan2((py - c[1]).toDouble(), (px - c[0]).toDouble()) - startAngle
-            while (delta > PI) delta -= 2 * PI
-            while (delta < -PI) delta += 2 * PI
-            // Screen y points down, so a turn that looks counter-clockwise has a falling angle.
-            val o = camera.view(8f, 8f, 8f)[2]
-            val toward = camera.view(if (handle.index == 0) 9f else 8f, if (handle.index == 1) 9f else 8f, if (handle.index == 2) 9f else 8f)[2] - o
-            val sign = if (toward >= 0) 1.0 else -1.0
-            model.dragRotate(handle.index, (Math.toDegrees(-delta) * sign).toFloat())
-        }
-        ModelTool.Select -> {}
     }
 }
 
@@ -357,24 +292,3 @@ private fun DrawScope.faceOutline(camera: ModelCamera, c: FloatArray, w: Int, h:
     line(camera, e, d, w, h, color, 2.5f, hideBehind); line(camera, d, a, w, h, color, 2.5f, hideBehind)
 }
 
-private fun DrawScope.drawHandle(handle: Handle, selected: List<minecartographer.model.ModelElement>, camera: ModelCamera, w: Int, h: Int) {
-    val axis = if (handle.tool == ModelTool.Resize) Dir.axisOf(handle.index) else handle.index
-    val color = AXIS_COLORS[axis]
-    val c = centerOf(selected).let { camera.project(it[0], it[1], it[2], w, h) }
-    when (handle.tool) {
-        ModelTool.Move -> {
-            drawLine(color, Offset(c[0], c[1]), Offset(handle.x, handle.y), strokeWidth = 2f)
-            drawCircle(color, 6f, Offset(handle.x, handle.y))
-        }
-        ModelTool.Rotate -> {
-            drawCircle(Color(0x33FFFFFF), RING, Offset(c[0], c[1]), style = Stroke(1f))
-            drawCircle(color, 7f, Offset(handle.x, handle.y))
-            drawCircle(Color.White, 7f, Offset(handle.x, handle.y), style = Stroke(1.5f))
-        }
-        ModelTool.Resize -> {
-            drawRect(color, Offset(handle.x - 5f, handle.y - 5f), androidx.compose.ui.geometry.Size(10f, 10f))
-            drawRect(Color.White, Offset(handle.x - 5f, handle.y - 5f), androidx.compose.ui.geometry.Size(10f, 10f), style = Stroke(1f))
-        }
-        ModelTool.Select -> {}
-    }
-}
