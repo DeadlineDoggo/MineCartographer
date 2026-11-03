@@ -69,7 +69,8 @@ data class ModelCamera(val yaw: Float = 35f, val pitch: Float = 28f, val zoom: F
 class ModelQuad(val element: Int, val dir: Int, val quad: Quad)
 
 /** What the viewport shows: the pixels, and per pixel the element and face (`id * 8 + dir + 1`, 0 for none) for picking. */
-class ModelFrame(val width: Int, val height: Int, val pixels: IntArray, val ids: IntArray) {
+/** [depth] is the view-space depth per pixel (larger is nearer), for hiding what lies behind a face. */
+class ModelFrame(val width: Int, val height: Int, val pixels: IntArray, val ids: IntArray, val depth: FloatArray) {
     /** The element and face under a pixel, or null. */
     fun pick(x: Int, y: Int): Pair<Int, Int>? {
         if (x !in 0 until width || y !in 0 until height) return null
@@ -121,7 +122,7 @@ object ModelRenderer {
         val ids = IntArray(width * height)
         val depth = FloatArray(width * height) { Float.NEGATIVE_INFINITY }
         for (q in quads) rasterize(q, camera, width, height, pixels, ids, depth)
-        return ModelFrame(width, height, pixels, ids)
+        return ModelFrame(width, height, pixels, ids, depth)
     }
 
     private fun shadeOf(q: Quad): Float {

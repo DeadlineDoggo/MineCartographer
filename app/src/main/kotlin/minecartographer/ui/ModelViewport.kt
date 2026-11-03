@@ -38,7 +38,9 @@ import kotlinx.coroutines.delay
 import minecartographer.editor.EditorState
 import minecartographer.model.ModelCamera
 import minecartographer.model.ModelEditorState
+import minecartographer.model.ModelFrame
 import minecartographer.model.ModelRenderer
+import minecartographer.model.ModelShading
 import minecartographer.model.ModelTool
 import minecartographer.textures.BlockModels
 import minecartographer.textures.Dir
@@ -81,6 +83,8 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
     }
     val bitmap = remember(frame) { frame?.let { imageOf(it.pixels, it.width, it.height).toComposeImageBitmap() } }
     val selected = model.selection.let { ids -> doc.elements.filter { it.id in ids } }
+    // The edges of every shown element, for the wireframe shading.
+    val wire = remember(doc, model.hidden) { doc.elements.filter { it.id !in model.hidden }.map(ModelRenderer::boxEdges) }
     val handles = remember(selected, model.tool, camera, size) { handlesOf(model, selected, camera, size) }
 
     val latestHandles by rememberUpdatedState(handles)
@@ -164,17 +168,23 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
             val w = size.width
             val h = size.height
             drawGrid(camera, w, h)
-            bitmap?.let { drawImage(it) }
+            if (model.shading != ModelShading.Wireframe) bitmap?.let { drawImage(it) }
+            // Plain solid shading hides what is behind a face; the wire shadings show every edge through the walls.
+            val hideBehind = if (model.shading == ModelShading.Solid) frame else null
+            if (model.shading != ModelShading.Solid) {
+                for (edges in wire) for ((a, b) in edges) line(camera, a, b, w, h, Color(0xB3C8CCD2), 1f, hideBehind)
+            }
             for (e in selected) {
-                for ((a, b) in ModelRenderer.boxEdges(e)) line(camera, a, b, w, h, EditorTheme.accent, 1.5f)
+                for ((a, b) in ModelRenderer.boxEdges(e)) line(camera, a, b, w, h, EditorTheme.accent, 1.5f, hideBehind)
             }
             val face = model.face
             if (face != null) {
-                for (q in quads) if (q.dir == face && q.element in model.selection) faceOutline(camera, q.quad.corners, w, h)
+                for (q in quads) if (q.dir == face && q.element in model.selection) faceOutline(camera, q.quad.corners, w, h, hideBehind)
             }
             for (hd in handles) drawHandle(hd, selected, camera, w, h)
         }
         ViewPresets(model, Modifier.align(Alignment.BottomStart).padding(12.dp))
+        ShadingSwitcher(model, Modifier.align(Alignment.TopEnd).padding(12.dp))
         if (doc.elements.isEmpty()) {
             Txt("Nothing here yet. Press N to add a cube.", Modifier.align(Alignment.Center), color = EditorTheme.textDim, size = 13.sp)
         } else if (packs == null && doc.elements.any { e -> e.faces.values.any { it.texture != null } }) {
@@ -188,6 +198,14 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
             model.tool.hint, Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp),
             color = EditorTheme.textFaint, size = 11.sp,
         )
+    }
+}
+
+/** Top right of the view, like Blender's shading buttons: wireframe, solid, or solid with the edges drawn over it. */
+@Composable
+private fun ShadingSwitcher(model: ModelEditorState, modifier: Modifier) {
+    Box(modifier.width(300.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xCC2B2D30)).padding(4.dp)) {
+        Segmented(ModelShading.entries, model.shading, { it.label }) { model.shading = it }
     }
 }
 
@@ -279,10 +297,37 @@ private fun pick(model: ModelEditorState, frame: minecartographer.model.ModelFra
 
 // ---- drawing ----
 
-private fun DrawScope.line(camera: ModelCamera, a: FloatArray, b: FloatArray, w: Int, h: Int, color: Color, width: Float = 1f) {
+/** How far behind a face (model units) a point may lie and still count as on it: edges sit on the faces they bound. */
+private const val DEPTH_SLACK = 0.25f
+
+/** A line between two model points; with a [hideBehind] frame, the stretches that a face covers are left out. */
+private fun DrawScope.line(camera: ModelCamera, a: FloatArray, b: FloatArray, w: Int, h: Int, color: Color, width: Float = 1f, hideBehind: ModelFrame? = null) {
     val p = camera.project(a[0], a[1], a[2], w, h)
     val q = camera.project(b[0], b[1], b[2], w, h)
-    drawLine(color, Offset(p[0], p[1]), Offset(q[0], q[1]), strokeWidth = width)
+    if (hideBehind == null) {
+        drawLine(color, Offset(p[0], p[1]), Offset(q[0], q[1]), strokeWidth = width)
+        return
+    }
+    val steps = (hypot(q[0] - p[0], q[1] - p[1]) / 3f).toInt().coerceIn(1, 400)
+    var from: Offset? = null
+    var to = Offset.Zero
+    for (i in 0..steps) {
+        val t = i / steps.toFloat()
+        val x = p[0] + (q[0] - p[0]) * t
+        val y = p[1] + (q[1] - p[1]) * t
+        val z = p[2] + (q[2] - p[2]) * t
+        val px = x.toInt()
+        val py = y.toInt()
+        val covered = px in 0 until hideBehind.width && py in 0 until hideBehind.height && z < hideBehind.depth[py * hideBehind.width + px] - DEPTH_SLACK
+        if (covered) {
+            from?.let { drawLine(color, it, to, strokeWidth = width) }
+            from = null
+        } else {
+            if (from == null) from = Offset(x, y)
+            to = Offset(x, y)
+        }
+    }
+    from?.let { drawLine(color, it, to, strokeWidth = width) }
 }
 
 private fun DrawScope.drawGrid(camera: ModelCamera, w: Int, h: Int) {
@@ -302,14 +347,14 @@ private fun DrawScope.drawGrid(camera: ModelCamera, w: Int, h: Int) {
     }
 }
 
-private fun DrawScope.faceOutline(camera: ModelCamera, c: FloatArray, w: Int, h: Int) {
+private fun DrawScope.faceOutline(camera: ModelCamera, c: FloatArray, w: Int, h: Int, hideBehind: ModelFrame?) {
     val a = floatArrayOf(c[0] * 16, c[1] * 16, c[2] * 16)
     val b = floatArrayOf(c[3] * 16, c[4] * 16, c[5] * 16)
     val d = floatArrayOf(c[6] * 16, c[7] * 16, c[8] * 16)
     val e = floatArrayOf(b[0] + d[0] - a[0], b[1] + d[1] - a[1], b[2] + d[2] - a[2])
     val color = Color(0xFFFFD34D)
-    line(camera, a, b, w, h, color, 2.5f); line(camera, b, e, w, h, color, 2.5f)
-    line(camera, e, d, w, h, color, 2.5f); line(camera, d, a, w, h, color, 2.5f)
+    line(camera, a, b, w, h, color, 2.5f, hideBehind); line(camera, b, e, w, h, color, 2.5f, hideBehind)
+    line(camera, e, d, w, h, color, 2.5f, hideBehind); line(camera, d, a, w, h, color, 2.5f, hideBehind)
 }
 
 private fun DrawScope.drawHandle(handle: Handle, selected: List<minecartographer.model.ModelElement>, camera: ModelCamera, w: Int, h: Int) {

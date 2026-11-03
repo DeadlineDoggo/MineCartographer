@@ -16,6 +16,13 @@ enum class ModelTool(val label: String, val key: Key, val keyLabel: String, val 
     Resize("Resize", Key.R, "R", "Drag a handle on a face to push that side in or out."),
 }
 
+/** How the viewport draws the model: the faces, the edges of every element, or both. */
+enum class ModelShading(val label: String) {
+    Wireframe("Wireframe"),
+    Solid("Solid"),
+    SolidWire("Solid + wire"),
+}
+
 /** One model tab: the document, what is picked, the camera, and the undo history of the document. */
 class ModelEditorState(val id: Int, name: String) {
     var name by mutableStateOf(name)
@@ -40,6 +47,7 @@ class ModelEditorState(val id: Int, name: String) {
     var tool by mutableStateOf(ModelTool.Select)
     var snap by mutableStateOf(1f)
     var camera by mutableStateOf(ModelCamera.ISO)
+    var shading by mutableStateOf(ModelShading.Solid)
 
     /** Unsaved changes: shown as a dot on the tab and asked about when it is closed. */
     var dirty by mutableStateOf(false)
