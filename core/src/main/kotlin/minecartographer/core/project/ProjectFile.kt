@@ -67,6 +67,19 @@ data class WorldTextures(
     val isDefault: Boolean get() = files.isEmpty() && coreJar == null && mods.isEmpty() && blocks.isEmpty() && modArchives.isEmpty()
 }
 
+/**
+ * A tab of the main area kept in a project. [kind] is `map`, `atlas` or `model`; only a model has content: its
+ * [name], the model it was opened from, its JSON ([json]) and the editor's own [settings] (camera, tool, grid...),
+ * which the file carries without knowing what they mean.
+ */
+data class ProjectTab(
+    val kind: String,
+    val name: String = "",
+    val origin: String? = null,
+    val json: String = "",
+    val settings: Map<String, String> = emptyMap(),
+)
+
 /** Everything a project file holds, ready to write. */
 class ProjectSnapshot(
     /** Open worlds in tab order, each with its layer stack. */
@@ -78,6 +91,10 @@ class ProjectSnapshot(
     val editor: Map<String, String>,
     /** Texture sources per world; worlds left out use the default. */
     val textures: Map<WorldSource, WorldTextures> = emptyMap(),
+    /** Open tabs of the main area in order, empty when it is just the map. */
+    val tabs: List<ProjectTab> = emptyList(),
+    /** Index into [tabs] of the one that was shown. */
+    val activeTab: Int? = null,
 )
 
 /** Layer stacks rebuilt from a project, plus what had to be left out. */
@@ -97,6 +114,9 @@ class ProjectDocument internal constructor(
     val editor: Map<String, String>,
     private val ids: List<String>,
     private val stackElements: List<Element>,
+    /** Tabs of the main area as saved; empty for a project from before they were kept. */
+    val tabs: List<ProjectTab> = emptyList(),
+    val activeTab: Int? = null,
 ) {
     /** Rebuilds the layer stacks; [opened] lines up with [worlds], null where a world could not be opened. */
     fun stacks(opened: List<WorldSource?>): RestoredStacks {
@@ -244,6 +264,23 @@ object ProjectFile {
         val editor = root.add(doc, "editor")
         for ((key, value) in project.editor) editor.setAttribute(key, value)
 
+        if (project.tabs.isNotEmpty()) {
+            val tabs = root.add(doc, "tabs")
+            project.activeTab?.let { tabs.setAttribute("active", it.toString()) }
+            for (tab in project.tabs) {
+                val e = tabs.add(doc, "tab")
+                e.setAttribute("kind", tab.kind)
+                if (tab.kind != "model") continue
+                e.setAttribute("name", tab.name)
+                tab.origin?.let { e.setAttribute("origin", it) }
+                for ((key, value) in tab.settings) e.add(doc, "setting").apply {
+                    setAttribute("key", key)
+                    setAttribute("value", value)
+                }
+                e.add(doc, "json").textContent = "\n" + tab.json
+            }
+        }
+
         writeXml(doc, file)
     }
 
@@ -284,7 +321,16 @@ object ProjectFile {
         val editor = root.children("editor").firstOrNull()?.let { e ->
             (0 until e.attributes.length).associate { e.attributes.item(it).nodeName to e.attributes.item(it).nodeValue }
         }.orEmpty()
-        return ProjectDocument(worlds, textures, active, selection, editor, ids, root.children("stack"))
+        val tabsEl = root.children("tabs").firstOrNull()
+        val tabs = tabsEl?.children("tab").orEmpty().map { e ->
+            val kind = e.getAttribute("kind")
+            if (kind != "model") ProjectTab(kind) else ProjectTab(
+                kind, e.getAttribute("name"), e.getAttribute("origin").ifEmpty { null },
+                e.children("json").firstOrNull()?.textContent.orEmpty().trim(),
+                e.children("setting").associate { it.getAttribute("key") to it.getAttribute("value") },
+            )
+        }
+        return ProjectDocument(worlds, textures, active, selection, editor, ids, root.children("stack"), tabs, tabsEl?.int("active"))
     }
 
     /** Name of the file [writeSources] puts into an exported world. */

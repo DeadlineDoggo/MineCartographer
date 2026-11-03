@@ -228,6 +228,32 @@ object Icons {
         drawPath(poly(0.12f, 0.68f, 0.34f, 0.52f, 0.34f, 0.84f), color)
     }
 
+    /** The floor grid seen from an angle, like the one in the view: a diamond with two lines each way. */
+    val Grid = EditorIcon { color ->
+        // Corners: top, right, bottom, left. Lines run parallel to the edges at a third and two thirds.
+        val top = 0.5f to 0.14f
+        val right = 0.94f to 0.5f
+        val bottom = 0.5f to 0.86f
+        val left = 0.06f to 0.5f
+        drawPath(poly(top.first, top.second, right.first, right.second, bottom.first, bottom.second, left.first, left.second), color, style = stroke())
+        fun at(a: Pair<Float, Float>, b: Pair<Float, Float>, t: Float) = (a.first + (b.first - a.first) * t) to (a.second + (b.second - a.second) * t)
+        for (t in listOf(1f / 3, 2f / 3)) {
+            val a = at(top, right, t)
+            val b = at(left, bottom, t)
+            line(color, a.first, a.second, b.first, b.second)
+            val c = at(top, left, t)
+            val d = at(right, bottom, t)
+            line(color, c.first, c.second, d.first, d.second)
+        }
+    }
+
+    /** A compass needle in a ring, for the world directions. */
+    val Directions = EditorIcon { color ->
+        drawCircle(color, radius = size.minDimension * 0.42f, style = stroke())
+        drawPath(poly(0.5f, 0.2f, 0.62f, 0.5f, 0.38f, 0.5f), color)
+        drawPath(poly(0.5f, 0.8f, 0.62f, 0.5f, 0.38f, 0.5f), color, style = stroke())
+    }
+
     val Folder = EditorIcon { color ->
         drawPath(poly(0.08f, 0.2f, 0.4f, 0.2f, 0.5f, 0.32f, 0.92f, 0.32f, 0.92f, 0.82f, 0.08f, 0.82f), color, style = stroke())
     }

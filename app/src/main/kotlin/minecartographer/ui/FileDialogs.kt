@@ -160,6 +160,16 @@ object FileDialogs {
         }
     }
 
+    /** Asks whether to throw away the unsaved changes of the model called [name]. */
+    fun confirmDiscard(name: String): Boolean {
+        platformLook
+        val answer = JOptionPane.showConfirmDialog(
+            null, "\"$name\" has changes that are not in a saved project yet.\nClosing the tab drops the model from the project.\n\nSave the project first (File > Save project) if you want to keep the changes. Close it anyway?",
+            "Close model", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE,
+        )
+        return answer == JOptionPane.YES_OPTION
+    }
+
     /** Lets the user pick the archive (jar or zip) of one mod. */
     fun chooseModArchive(modId: String, start: Path?): Path? {
         val spec = DialogSpec(
