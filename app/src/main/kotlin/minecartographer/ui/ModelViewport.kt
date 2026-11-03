@@ -68,14 +68,8 @@ private enum class Drag { None, Click, Handle, Orbit, Pan }
 fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifier = Modifier) {
     var size by remember { mutableStateOf(IntSize.Zero) }
     val world = state.activeWorld
-    var packs by remember { mutableStateOf<BlockModels?>(null) }
-    // The packs load in the background: look again until they are there.
-    LaunchedEffect(world) {
-        while (true) {
-            packs = world?.let(state::modelsOf)
-            delay(1000)
-        }
-    }
+    // The packs load in the background; reading them here composes the view again once they are there.
+    val packs: BlockModels? = world?.let(state::modelsOf)
     val doc = model.doc
     val camera = model.camera
     val quads = remember(doc, model.hidden, packs) { ModelRenderer.quads(doc, model.hidden) { id -> packs?.texture(id) } }
