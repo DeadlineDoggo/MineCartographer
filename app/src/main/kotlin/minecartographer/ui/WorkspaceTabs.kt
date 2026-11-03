@@ -69,21 +69,24 @@ fun WorkspaceTabs(state: EditorState) {
 @Composable
 private fun Tab(label: String, selected: Boolean, closable: Boolean, onClose: () -> Unit, onSelect: () -> Unit) {
     val shape = RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp)
-    Row(
+    Box(
         Modifier.padding(start = 4.dp, top = 4.dp).clip(shape)
             .background(if (selected) EditorTheme.panel else Color.Transparent)
-            .clickable(onClick = onSelect)
-            .padding(start = 12.dp, end = if (closable) 4.dp else 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .clickable(onClick = onSelect),
     ) {
-        Box(Modifier.height(28.dp), contentAlignment = Alignment.Center) {
-            Txt(label, color = if (selected) EditorTheme.text else EditorTheme.textDim, size = 12.sp, weight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
-            // The line takes the width of the label; fillMaxWidth would stretch the whole tab across the strip.
-            if (selected) Box(Modifier.matchParentSize()) { Box(Modifier.align(Alignment.TopCenter).fillMaxWidth().height(2.dp).background(EditorTheme.accent)) }
+        Row(
+            Modifier.padding(start = 12.dp, end = if (closable) 4.dp else 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.height(28.dp), contentAlignment = Alignment.Center) {
+                Txt(label, color = if (selected) EditorTheme.text else EditorTheme.textDim, size = 12.sp, weight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+            }
+            if (closable) {
+                Spacer(Modifier.width(6.dp))
+                IconButton(Icons.Close, "Close the tab", size = 20.dp, iconSize = 8.dp, onClick = onClose)
+            }
         }
-        if (closable) {
-            Spacer(Modifier.width(6.dp))
-            IconButton(Icons.Close, "Close the tab", size = 20.dp, iconSize = 8.dp, onClick = onClose)
-        }
+        // The mark runs along the whole top of the tab, close button included. matchParentSize keeps it from widening the tab.
+        if (selected) Box(Modifier.matchParentSize()) { Box(Modifier.align(Alignment.TopStart).fillMaxWidth().height(2.dp).background(EditorTheme.accent)) }
     }
 }
