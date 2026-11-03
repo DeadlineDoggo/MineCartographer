@@ -37,6 +37,9 @@ class ModelViewportSmokeTest {
             val bare = render(state, model)
             assertFalse(all.contentEquals(noSides), "the direction names show")
             assertFalse(noSides.contentEquals(bare), "the grid and the axes show")
+            // The grid is the master: with it off, the names of the directions stay off whatever their own switch says.
+            model.showSides = true
+            assertTrue(bare.contentEquals(render(state, model)), "no names without the grid")
             assertTrue(all.size > 1000)
         } finally {
             state.dispose()

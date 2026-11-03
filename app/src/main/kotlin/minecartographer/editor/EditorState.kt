@@ -475,6 +475,7 @@ class EditorState {
                 missingNotified.clear()
                 loadedTextures.clear()
                 tiles.textures = emptyMap()
+                texturesRevision++
                 refreshTextures(force = true)
                 tiles.reloadWorlds(worlds.mapTo(HashSet()) { it.id })
                 notify("Rescanning mods and textures")
@@ -554,6 +555,7 @@ class EditorState {
                 val applied = withContext(Dispatchers.Main) {
                     if (request != textureRequest) return@withContext false
                     tiles.textures = models
+                    texturesRevision++
                     loadedTextures.clear()
                     loadedTextures.putAll(loaded)
                     texturesLoading = false
@@ -715,8 +717,17 @@ class EditorState {
             .onFailure { notify("Could not copy: ${it.message}", warning = true) }
     }
 
-    /** The pack [world] is drawn with, once its textures are loaded. */
-    fun modelsOf(world: WorldSource): BlockModels? = tiles.textures[world.id] as? BlockModels
+    /** Counts the times the loaded texture sets changed, so what shows them is composed again when they arrive. */
+    private var texturesRevision by mutableIntStateOf(0)
+
+    /**
+     * The pack [world] is drawn with, once its textures are loaded. Read while composing, it makes that composition
+     * depend on the textures: they load in the background and the window shows them as soon as they are there.
+     */
+    fun modelsOf(world: WorldSource): BlockModels? {
+        texturesRevision.let { }
+        return tiles.textures[world.id] as? BlockModels
+    }
 
     /** Modded block keys seen in [world] so far, sorted. */
     fun moddedKeysOf(world: WorldSource): List<String> {

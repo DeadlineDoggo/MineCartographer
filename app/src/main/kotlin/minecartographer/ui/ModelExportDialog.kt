@@ -150,7 +150,7 @@ private fun Content(state: EditorState, model: ModelEditorState) {
             if (models == null) {
                 Txt("Open a world with its textures loaded to copy the textures the model uses. The model refers to them by id either way.", color = EditorTheme.warning, size = 12.sp, maxLines = 3)
             }
-            Checkbox("Copy the ${used.size} textures the model uses", copyTextures && models != null) { if (models != null) copyTextures = it }
+            Checkbox(if (used.size == 1) "Copy the texture the model uses" else "Copy the ${used.size} textures the model uses", copyTextures && models != null) { if (models != null) copyTextures = it }
             Checkbox("Move them into the namespace (${namespace.trim()}:block/...)", ownNamespace && copyTextures) { if (copyTextures) ownNamespace = it }
             Checkbox("Skip vanilla textures (minecraft:...)", skipVanilla) { skipVanilla = it }
             Txt(
