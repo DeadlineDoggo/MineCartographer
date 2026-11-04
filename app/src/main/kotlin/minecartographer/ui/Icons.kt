@@ -3,6 +3,9 @@ package minecartographer.ui
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.loadSvgPainter
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
@@ -12,6 +15,17 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 /** Small line icons drawn in code, so the app needs no icon font or image assets. */
 fun interface EditorIcon {
     fun DrawScope.draw(color: Color)
+}
+
+/** An icon from an SVG file in the resources, drawn in the colour the icon is asked for (the SVG's own colours are replaced). */
+fun svg(resource: String): EditorIcon {
+    val painter by lazy {
+        val stream = checkNotNull(EditorIcon::class.java.classLoader.getResourceAsStream(resource)) { "Missing icon $resource" }
+        stream.use { loadSvgPainter(it, Density(1f)) }
+    }
+    return EditorIcon { color ->
+        with(painter) { draw(size, colorFilter = ColorFilter.tint(color)) }
+    }
 }
 
 object Icons {
@@ -109,11 +123,7 @@ object Icons {
 
     // ---- Tools ----
 
-    val Hand = EditorIcon { color ->
-        drawRoundRect(color, topLeft = Offset(size.width * 0.22f, size.height * 0.42f), size = Size(size.width * 0.58f, size.height * 0.5f),
-            cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.width * 0.18f), style = stroke())
-        for (x in listOf(0.3f, 0.44f, 0.58f, 0.72f)) line(color, x, 0.46f, x, if (x == 0.3f || x == 0.72f) 0.22f else 0.1f)
-    }
+    val Hand = svg("icons/hand.svg")
 
     val BrushSelect = EditorIcon { color ->
         drawCircle(color, radius = size.minDimension * 0.4f,
