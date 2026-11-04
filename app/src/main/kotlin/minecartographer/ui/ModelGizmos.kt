@@ -84,7 +84,7 @@ internal fun centerOf(selected: List<ModelElement>): FloatArray {
  * none (they are hidden behind the model); the wire shadings see through, so those faces have theirs, dimmed.
  */
 internal fun handlesOf(model: ModelEditorState, selected: List<ModelElement>, camera: ModelCamera, size: IntSize, solid: Boolean): List<Handle> {
-    if (selected.isEmpty() || size.width < 2 || model.tool == ModelTool.Select) return emptyList()
+    if (selected.isEmpty() || size.width < 2 || model.tool == ModelTool.Select || model.tool == ModelTool.Grab) return emptyList()
     val w = size.width
     val h = size.height
     val c = centerOf(selected)
@@ -130,7 +130,7 @@ internal fun handlesOf(model: ModelEditorState, selected: List<ModelElement>, ca
                 Handle(ModelTool.Resize, dir, from, from + Offset(d[0], d[1]) * (sign * RESIZE_REACH), behind = !facing)
             }
         }
-        ModelTool.Select -> emptyList()
+        ModelTool.Select, ModelTool.Grab -> emptyList()
     }
 }
 
@@ -177,7 +177,7 @@ internal fun dragHandle(model: ModelEditorState, handle: Handle, dx: Float, dy: 
             // The plane's axes are right-handed about the axis, so a positive angle is a positive turn.
             model.dragRotate(handle.index, Math.toDegrees(delta).toFloat())
         }
-        ModelTool.Select -> {}
+        ModelTool.Select, ModelTool.Grab -> {}
     }
 }
 
@@ -199,7 +199,7 @@ internal fun DrawScope.drawHandle(handle: Handle, lit: Boolean) {
                 drawLine(color.copy(alpha = if (handle.front[i]) 1f else 0.35f), a, b, strokeWidth = width)
             }
         }
-        ModelTool.Select -> {}
+        ModelTool.Select, ModelTool.Grab -> {}
     }
 }
 

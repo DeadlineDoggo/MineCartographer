@@ -15,6 +15,7 @@ enum class ModelTool(val label: String, val key: Key, val keyLabel: String, val 
     Move("Move", Key.W, "W", "Drag an arrow to move the selection along that axis."),
     Rotate("Rotate", Key.E, "E", "Drag a ring handle to turn the selection about that axis, in steps of 22.5°."),
     Resize("Resize", Key.R, "R", "Drag a handle on a face to push that side in or out."),
+    Grab("Grab", Key.G, "G", "Drag to move the view. Tap, then tap again and hold to turn it, as with the middle button."),
 }
 
 /** How the viewport draws the model: the faces, the edges of every element, or both. */

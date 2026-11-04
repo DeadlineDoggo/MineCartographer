@@ -62,6 +62,8 @@ import kotlin.math.hypot
 import kotlin.math.pow
 import kotlin.math.sin
 
+private const val DOUBLE_TAP_MS = 350L
+
 private enum class Drag { None, Click, Handle, Orbit, Pan }
 
 /** The 3D view of a model: draws it, picks in it, and carries the gizmos of the tools. */
@@ -105,6 +107,8 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
                     var lastX = 0f
                     var lastY = 0f
                     var moved = false
+                    var lastTapAt = Long.MIN_VALUE / 2
+                    var grabPress = false
                     var handle: Handle? = null
                     var startAngle: Double? = null
                     while (true) {
@@ -125,6 +129,12 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
                                 when {
                                     b.isTertiaryPressed -> drag = if (event.keyboardModifiers.isShiftPressed) Drag.Pan else Drag.Orbit
                                     b.isSecondaryPressed -> drag = Drag.Orbit
+                                    b.isPrimaryPressed && model.tool == ModelTool.Grab -> {
+                                        // A second press soon after a tap, held and dragged, turns the view.
+                                        val doubleTap = change.uptimeMillis - lastTapAt < DOUBLE_TAP_MS
+                                        drag = if (doubleTap) Drag.Orbit else Drag.Pan
+                                        grabPress = true
+                                    }
                                     b.isPrimaryPressed -> {
                                         handle = hitHandle(latestHandles, p)
                                         drag = if (handle != null) Drag.Handle else Drag.Click
@@ -155,6 +165,9 @@ fun ModelViewport(state: EditorState, model: ModelEditorState, modifier: Modifie
                             }
                             PointerEventType.Release -> {
                                 if (!event.buttons.isPrimaryPressed && !event.buttons.isSecondaryPressed && !event.buttons.isTertiaryPressed) {
+                                    // A short press that stayed put is the first tap of a double tap.
+                                    lastTapAt = if (grabPress && !moved && drag == Drag.Pan) change.uptimeMillis else Long.MIN_VALUE / 2
+                                    grabPress = false
                                     when (drag) {
                                         Drag.Handle -> model.endGesture(handle?.tool?.label ?: "Edit")
                                         Drag.Click -> if (!moved) pick(model, latestFrame, p.x, p.y, event.keyboardModifiers.isShiftPressed)

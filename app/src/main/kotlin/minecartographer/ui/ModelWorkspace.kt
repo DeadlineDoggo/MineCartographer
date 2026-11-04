@@ -59,6 +59,7 @@ private fun toolIcon(tool: ModelTool) = when (tool) {
     ModelTool.Move -> Icons.Move
     ModelTool.Rotate -> Icons.RotateRight
     ModelTool.Resize -> Icons.Fit
+    ModelTool.Grab -> Icons.Hand
 }
 
 /** Vertical tool palette of the model editor, like the map's. */
