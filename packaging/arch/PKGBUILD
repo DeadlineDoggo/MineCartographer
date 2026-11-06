@@ -1,0 +1,28 @@
+# Arch Linux package of the portable build (it bundles its own Java runtime, so Java is not a dependency).
+# The release workflow builds it; to build it by hand, put the files named in `source` next to this one and run
+#   MC_VERSION=0.4.0-alpha makepkg -f
+# where MineCartographer-$MC_VERSION-linux-x64.tar.gz comes from `./gradlew :app:createDistributable` (see release.yml).
+pkgname=minecartographer
+pkgver=${MC_VERSION//-/_}
+pkgrel=1
+pkgdesc='Map and chunk editor for Minecraft worlds, with 3D views and a model editor'
+arch=('x86_64')
+url='https://github.com/DeadlineDoggo/MineCartographer'
+license=('GPL-3.0-or-later')
+depends=('glibc' 'fontconfig' 'freetype2' 'alsa-lib' 'libxrender' 'libxtst' 'libxi')
+optdepends=('zenity: native file dialogs on GTK desktops' 'kdialog: native file dialogs on KDE')
+options=('!strip')
+source=("MineCartographer-${MC_VERSION}-linux-x64.tar.gz"
+        'minecartographer.desktop'
+        'app.png'
+        'LICENSE')
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+package() {
+  install -d "$pkgdir/opt/$pkgname" "$pkgdir/usr/bin"
+  cp -a "$srcdir/MineCartographer/." "$pkgdir/opt/$pkgname/"
+  ln -s "/opt/$pkgname/bin/MineCartographer" "$pkgdir/usr/bin/$pkgname"
+  install -Dm644 minecartographer.desktop "$pkgdir/usr/share/applications/$pkgname.desktop"
+  install -Dm644 app.png "$pkgdir/usr/share/icons/hicolor/512x512/apps/$pkgname.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -63,8 +63,40 @@ jobs:
             app/build/compose/binaries/main/deb/*.deb
             app/build/compose/binaries/main/*.tar.gz
 
-  release:
+  # Compose has no Arch format: this wraps the portable archive in a pacman package (packaging/arch/PKGBUILD).
+  arch:
     needs: package
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - run: pacman -Syu --noconfirm git
+
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux
+          path: dist
+
+      - name: Build the package
+        run: |
+          version=$(grep '^appVersion=' gradle.properties | cut -d= -f2)
+          cp dist/*.tar.gz packaging/arch/
+          cp app/icons/app.png LICENSE packaging/arch/
+          # makepkg refuses to run as root.
+          useradd -m builder
+          chown -R builder packaging/arch
+          cd packaging/arch
+          su builder -c "MC_VERSION=$version makepkg -f --nodeps"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arch
+          if-no-files-found: error
+          path: packaging/arch/*.pkg.tar.zst
+
+  release:
+    needs: [package, arch]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:

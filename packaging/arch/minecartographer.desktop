@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=MineCartographer
+Comment=Map and chunk editor for Minecraft worlds
+Exec=minecartographer
+Icon=minecartographer
+Categories=Utility;Game;
+Terminal=false
