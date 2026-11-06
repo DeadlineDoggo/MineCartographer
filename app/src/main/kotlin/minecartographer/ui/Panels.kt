@@ -44,6 +44,7 @@ import minecartographer.editor.SelectMode
 import minecartographer.editor.Tool
 import minecartographer.textures.TextureFiles
 import minecartographer.textures.ModLocator
+import minecartographer.core.markers.MarkerKind
 import minecartographer.viewport.RenderMode
 
 private val panelPadding = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
@@ -335,6 +336,10 @@ fun ViewPanel(state: EditorState) {
         if (settings.cave) {
             Checkbox("Show the surface as a faint trace over the caves", settings.caveSurface) { state.updateRenderSettings(settings.copy(caveSurface = it)) }
         }
+        val found = state.activeWorld?.let { state.markers[it.id] }.orEmpty()
+        val count = { kind: MarkerKind -> found.count { it.kind == kind } }
+        Checkbox("Waypoints (${count(MarkerKind.Waypoint)}): minimap mods", state.showWaypoints) { state.showWaypoints = it }
+        Checkbox("Map banners (${count(MarkerKind.Banner)})", state.showBanners) { state.showBanners = it }
         Checkbox("Layer colors and erased chunks", state.showLayerColors) { state.showLayerColors = it }
         if (!settings.flat) Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Txt("Height", Modifier.width(92.dp), color = EditorTheme.textDim, size = 12.sp)

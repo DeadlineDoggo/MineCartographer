@@ -33,6 +33,8 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import minecartographer.core.ChunkPos
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.rememberTextMeasurer
 import minecartographer.core.Rotation
 import minecartographer.core.WorldSource
 import minecartographer.core.edit.ChunkLayer
@@ -154,6 +156,8 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
     val tilePaint = remember { SkPaint() }
     val tints = remember { HashMap<Color, SkColorFilter>() }
     val prefetch = remember { PrefetchTracker() }
+    val measurer = rememberTextMeasurer()
+    val markerLabels = remember { HashMap<String, TextLayoutResult>() }
     var drag by remember { mutableStateOf(Drag.None) }
     // Where the map sits in the window, to tell whether the pointer is on a control laid over it.
     var origin by remember { mutableStateOf(Offset.Zero) }
@@ -480,6 +484,8 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                 )
             }
         }
+
+        drawMarkers(state.visibleMarkers(), view, hs, rotation, measurer, markerLabels)
 
         if (prefetch.update(view, stack, rotation, size.width, size.height)) {
             val around = view.visibleChunks(size.width * PREFETCH_SCALE, size.height * PREFETCH_SCALE, VIEW_MIN_Y, VIEW_MAX_Y, hs)

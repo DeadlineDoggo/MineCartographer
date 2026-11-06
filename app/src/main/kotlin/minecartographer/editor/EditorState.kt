@@ -20,6 +20,9 @@ import minecartographer.core.ChunkPos
 import minecartographer.core.Rotation
 import minecartographer.core.WorldSource
 import minecartographer.core.anvil.AnvilWorld
+import minecartographer.core.markers.Marker
+import minecartographer.core.markers.MarkerKind
+import minecartographer.core.markers.MarkerReader
 import minecartographer.core.anvil.WorldExporter
 import minecartographer.core.anvil.WorldInfo
 import java.nio.file.Path
@@ -203,10 +206,25 @@ class EditorState {
     private var fitPending = false
     private var lastFitView: IsoView? = null
 
+    /** Waypoints and map banners of the open worlds, by world id; read in the background when a world is added. */
+    val markers = mutableStateMapOf<String, List<Marker>>()
+    var showWaypoints by mutableStateOf(true)
+    var showBanners by mutableStateOf(true)
+
+    /** The markers of the active world that are switched on. */
+    fun visibleMarkers(): List<Marker> {
+        val all = activeWorld?.let { markers[it.id] }.orEmpty()
+        return all.filter { if (it.kind == MarkerKind.Banner) showBanners else showWaypoints }
+    }
+
     fun addWorld(world: WorldSource) {
         if (worlds.none { it.id == world.id }) {
             worlds += world
             stacks[world.id] = LayerStack.of(world)
+            if (world is AnvilWorld) scope.launch(Dispatchers.IO) {
+                val found = runCatching { MarkerReader.read(world.folder, world.name) }.getOrDefault(emptyList())
+                if (found.isNotEmpty()) markers[world.id] = found
+            }
             changed()
             refreshTextures()
         }
@@ -287,6 +305,7 @@ class EditorState {
         changed()
         worlds.remove(world)
         stacks.remove(world.id)
+        markers.remove(world.id)
         worldTextures.remove(world.id)
         refreshTextures()
         (world as? AnvilWorld)?.close()
@@ -1473,6 +1492,8 @@ class EditorState {
         "cave-surface" to renderSettings.caveSurface.toString(),
         "flat" to renderSettings.flat.toString(),
         "layer-colors" to showLayerColors.toString(),
+        "show-waypoints" to showWaypoints.toString(),
+        "show-banners" to showBanners.toString(),
         "rotation" to rotation.toString(),
         "center-u" to view.centerU.toString(),
         "center-v" to view.centerV.toString(),
@@ -1501,6 +1522,8 @@ class EditorState {
             flat = bool("flat") ?: renderSettings.flat,
         ))
         showLayerColors = bool("layer-colors") ?: showLayerColors
+        showWaypoints = bool("show-waypoints") ?: showWaypoints
+        showBanners = bool("show-banners") ?: showBanners
         s["rotation"]?.toIntOrNull()?.let { rotation = Rotation.normalize(it) }
         s["tool"]?.let { t -> Tool.entries.firstOrNull { it.name == t } }?.let { tool = it }
         s["select-mode"]?.let { m -> SelectMode.entries.firstOrNull { it.name == m } }?.let { selectMode = it }
