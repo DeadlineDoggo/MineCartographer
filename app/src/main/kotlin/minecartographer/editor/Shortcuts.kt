@@ -79,6 +79,7 @@ fun EditorState.handleKey(e: KeyEvent): Boolean {
         Key.One -> setRenderMode(RenderMode.Map)
         Key.Two -> setRenderMode(RenderMode.Blocks)
         Key.Three -> setRenderMode(RenderMode.Textured)
+        Key.Four -> updateRenderSettings(renderSettings.copy(cave = !renderSettings.cave))
         Key.V -> setFlat(!renderSettings.flat)
         Key.Comma -> rotate(-1)
         Key.Period -> rotate(+1)

@@ -291,6 +291,8 @@ private fun viewMenu(state: EditorState, map: Boolean) =
             add(MenuSeparator)
             if (map) {
                 add(MenuItem("Chunk borders", checked = s.chunkBorders) { state.updateRenderSettings(s.copy(chunkBorders = !s.chunkBorders)) })
+                add(MenuItem("Cave view", "4", checked = s.cave) { state.updateRenderSettings(s.copy(cave = !s.cave)) })
+                if (s.cave) add(MenuItem("Faint surface in cave view", checked = s.caveSurface) { state.updateRenderSettings(s.copy(caveSurface = !s.caveSurface)) })
                 add(MenuItem("Layer colors", checked = state.showLayerColors) { state.showLayerColors = !state.showLayerColors })
                 add(MenuSeparator)
             }

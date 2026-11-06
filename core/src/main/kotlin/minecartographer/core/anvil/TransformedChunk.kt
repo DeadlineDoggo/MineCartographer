@@ -37,6 +37,9 @@ class TransformedChunk(val ref: ChunkRef, val at: ChunkPos, val under: AnvilWorl
     override fun loadBlocks(pos: ChunkPos): ChunkBlocks? =
         ChunkTransform.build(ref, at, under, conversion, withEntities = false)?.first?.let { SurfaceExtractor.extractBlocks(it, pos, legacy) }
 
+    override fun loadCaves(pos: ChunkPos): ChunkBlocks? =
+        ChunkTransform.build(ref, at, under, conversion, withEntities = false)?.first?.let { SurfaceExtractor.extractBlocks(it, pos, legacy, deep = true) }
+
     companion object {
         /** The id of the world a chunk cache entry belongs to, for transformed chunks too. */
         fun baseId(worldId: String) = worldId.substringBefore('#')

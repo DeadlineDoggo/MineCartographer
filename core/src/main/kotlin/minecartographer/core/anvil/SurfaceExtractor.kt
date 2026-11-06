@@ -68,16 +68,17 @@ object SurfaceExtractor {
 
     /**
      * The blocks that can be seen from above: everything from one block below the lowest surface point
-     * (the top solid or water block of a column) up to the highest non-air block.
+     * (the top solid or water block of a column) up to the highest non-air block. With [deep], everything
+     * below is kept too, down to the lowest section with blocks in it: that is where the caves are.
      */
-    fun extractBlocks(root: CompoundTag, pos: ChunkPos, legacy: LegacyMapping = LegacyMapping.VANILLA): ChunkBlocks? {
+    fun extractBlocks(root: CompoundTag, pos: ChunkPos, legacy: LegacyMapping = LegacyMapping.VANILLA, deep: Boolean = false): ChunkBlocks? {
         val sections = decode(root, legacy)?.filterNot { it.allAir } ?: return null
         val solid = sections.filterNot { it.allSkip }
         if (solid.isEmpty()) return null
         val waterDepth = ByteArray(256)
         val surface = scan(pos, solid, waterDepth) ?: return null
 
-        val minY = maxOf(surface.minHeight - 1, sections.last().y * 16)
+        val minY = if (deep) sections.last().y * 16 else maxOf(surface.minHeight - 1, sections.last().y * 16)
         var maxY = surface.maxHeight
         top@ for (section in sections) { // highest first
             for (y in 15 downTo 0) {

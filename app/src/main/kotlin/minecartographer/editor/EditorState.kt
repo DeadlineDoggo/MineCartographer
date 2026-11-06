@@ -1469,6 +1469,8 @@ class EditorState {
         "render-mode" to renderSettings.mode.name,
         "height-scale" to renderSettings.heightScale.toString(),
         "chunk-borders" to renderSettings.chunkBorders.toString(),
+        "cave" to renderSettings.cave.toString(),
+        "cave-surface" to renderSettings.caveSurface.toString(),
         "flat" to renderSettings.flat.toString(),
         "layer-colors" to showLayerColors.toString(),
         "rotation" to rotation.toString(),
@@ -1494,6 +1496,8 @@ class EditorState {
             mode = s["render-mode"]?.let { m -> RenderMode.entries.firstOrNull { it.name == m } } ?: renderSettings.mode,
             heightScale = float("height-scale") ?: renderSettings.heightScale,
             chunkBorders = bool("chunk-borders") ?: renderSettings.chunkBorders,
+            cave = bool("cave") ?: renderSettings.cave,
+            caveSurface = bool("cave-surface") ?: renderSettings.caveSurface,
             flat = bool("flat") ?: renderSettings.flat,
         ))
         showLayerColors = bool("layer-colors") ?: showLayerColors

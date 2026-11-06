@@ -53,6 +53,62 @@ fun RenderModeSwitcher(state: EditorState, modifier: Modifier) {
         FlatButton(state)
         Spacer(Modifier.width(8.dp))
         ModeSwitcher(state)
+        Spacer(Modifier.width(8.dp))
+        CaveButton(state)
+        if (state.renderSettings.cave) {
+            Spacer(Modifier.width(8.dp))
+            SurfaceButton(state)
+        }
+    }
+}
+
+/** Next to the render mode: the Cave view on or off, whichever mode is picked. */
+@Composable
+private fun CaveButton(state: EditorState) {
+    val on = state.renderSettings.cave
+    val flat = state.renderSettings.flat
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    WithTooltip(if (on) "Back to the ground: turn the cave view off (4)" else "See through the ground into the caves, in the render mode picked (4)") {
+        Row(
+            Modifier.height(52.dp).clip(PANEL_SHAPE)
+                .background(if (on) EditorTheme.accentSoft else if (hovered) EditorTheme.panelRaised else PANEL_BACKGROUND)
+                .border(1.dp, if (on || hovered) EditorTheme.accent else EditorTheme.border, PANEL_SHAPE)
+                .hoverable(interaction)
+                .clickable(interaction, indication = null) { state.updateRenderSettings(state.renderSettings.copy(cave = !on)) }
+                .padding(start = 5.dp, end = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Canvas(Modifier.size(42.dp).clip(PREVIEW_SHAPE).background(EditorTheme.viewportBackground)) { if (flat) caveFlat() else caveRoom() }
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Txt("Cave view", color = EditorTheme.textDim, size = 10.sp)
+                Txt(if (on) "On" else "Off", color = if (on) EditorTheme.accent else EditorTheme.text, size = 13.sp, weight = FontWeight.SemiBold)
+            }
+        }
+    }
+}
+
+/** The Cave view: switches the faint surface on and off. */
+@Composable
+private fun SurfaceButton(state: EditorState) {
+    val on = state.renderSettings.caveSurface
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    WithTooltip(if (on) "The faint surface is shown: click to show only the caves" else "Only the caves are shown: click to add the faint surface") {
+        Column(
+            Modifier.height(52.dp).clip(PANEL_SHAPE)
+                .background(if (on) EditorTheme.accentSoft else if (hovered) EditorTheme.panelRaised else PANEL_BACKGROUND)
+                .border(1.dp, if (on || hovered) EditorTheme.accent else EditorTheme.border, PANEL_SHAPE)
+                .hoverable(interaction)
+                .clickable(interaction, indication = null) { state.updateRenderSettings(state.renderSettings.copy(caveSurface = !on)) }
+                .padding(horizontal = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Txt("Surface", size = 13.sp, weight = FontWeight.SemiBold)
+            Txt(if (on) "On" else "Off", color = if (on) EditorTheme.accent else EditorTheme.textDim, size = 10.sp)
+        }
     }
 }
 
@@ -218,6 +274,41 @@ private fun DrawScope.flatPatch(outlined: Boolean) {
         val tl = Offset(o + x * cell, o + z * cell)
         quad(color, tl, tl + Offset(cell, 0f), tl + Offset(cell, cell), tl + Offset(0f, cell), if (outlined) Color(0x66000000) else null)
     }
+}
+
+private val Stone = Color(0xFF8A8A8E)
+
+/** From above: the ground as a faint trace, and a cave floor showing through it. */
+private fun DrawScope.caveFlat() {
+    val cell = size.width / 4
+    val o = (size.width - 3 * cell) / 2
+    for (x in 0..2) for (z in 0..2) {
+        val tl = Offset(o + x * cell, o + z * cell)
+        quad(Grass.copy(alpha = 0.18f), tl, tl + Offset(cell, 0f), tl + Offset(cell, cell), tl + Offset(0f, cell))
+    }
+    val tl = Offset(o + cell * 0.5f, o + cell * 0.6f)
+    quad(Stone.shade(0.9f), tl, tl + Offset(cell * 1.6f, 0f), tl + Offset(cell * 1.6f, cell * 1.3f), tl + Offset(0f, cell * 1.3f))
+    quad(Color(0xFFD45A12), tl + Offset(cell * 0.9f, cell * 0.6f), tl + Offset(cell * 1.4f, cell * 0.6f), tl + Offset(cell * 1.4f, cell * 1.1f), tl + Offset(cell * 0.9f, cell * 1.1f))
+}
+
+/** The ground as a ghost of a block, and in it a cave seen from inside: its floor and the two walls at the back. */
+private fun DrawScope.caveRoom() {
+    val u = size.width * 0.34f
+    val x = size.width / 2
+    val y = size.height / 2 + u * 0.1f
+    val h = u * 0.9f
+    val ghost = Grass.copy(alpha = 0.16f)
+    val l = Offset(x - u, y); val r = Offset(x + u, y)
+    val t = Offset(x, y - u / 2); val b = Offset(x, y + u / 2)
+    val up = Offset(0f, -h)
+    quad(ghost, l + up, t + up, r + up, b + up)
+    quad(ghost, l + up, b + up, b, l)
+    quad(ghost, b + up, r + up, r, b)
+    // Inside, the far walls and the floor: the faces that turn to the viewer.
+    quad(Stone.shade(0.64f), l, t, t + up, l + up)
+    quad(Stone.shade(0.8f), t, r, r + up, t + up)
+    quad(Stone.shade(1.05f), l, t, r, b)
+    quad(Color(0xFFD45A12), Offset(x - u * 0.25f, y), Offset(x, y - u * 0.125f), Offset(x + u * 0.25f, y), Offset(x, y + u * 0.125f))
 }
 
 /** A grass block's top from above, pixel-art like Minecraft's texture. */

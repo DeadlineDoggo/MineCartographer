@@ -94,6 +94,11 @@ class AnvilWorld private constructor(
         return SurfaceExtractor.extractBlocks(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos, legacy)
     }
 
+    override fun loadCaves(pos: ChunkPos): ChunkBlocks? {
+        val raw = readChunk(pos) ?: return null
+        return SurfaceExtractor.extractBlocks(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos, legacy, deep = true)
+    }
+
     override fun countBlocks(pos: ChunkPos): Map<minecartographer.core.BlockState, Int>? {
         val raw = readChunk(pos) ?: return null
         return SurfaceExtractor.countBlocks(raw.nbt(SurfaceExtractor.UNUSED_TAGS), legacy)

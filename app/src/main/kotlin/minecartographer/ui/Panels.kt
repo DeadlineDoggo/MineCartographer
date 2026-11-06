@@ -331,6 +331,10 @@ fun ViewPanel(state: EditorState) {
 
         SectionHeader("DISPLAY")
         Checkbox("Chunk borders", settings.chunkBorders) { state.updateRenderSettings(settings.copy(chunkBorders = it)) }
+        Checkbox("Cave view: see through the ground into the caves", settings.cave) { state.updateRenderSettings(settings.copy(cave = it)) }
+        if (settings.cave) {
+            Checkbox("Show the surface as a faint trace over the caves", settings.caveSurface) { state.updateRenderSettings(settings.copy(caveSurface = it)) }
+        }
         Checkbox("Layer colors and erased chunks", state.showLayerColors) { state.showLayerColors = it }
         if (!settings.flat) Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             Txt("Height", Modifier.width(92.dp), color = EditorTheme.textDim, size = 12.sp)

@@ -42,25 +42,18 @@ private val BAR_SHAPE = RoundedCornerShape(8.dp)
 
 /**
  * Icons along the bottom of the map while chunks are selected: turn, raise or lower, and cut the selected chunks
- * of the active pasted layer. On the original world it offers to lift the selection into a layer first.
+ * of the active pasted layer. Nothing on the original world.
  */
 @Composable
 fun SelectionToolbar(state: EditorState, modifier: Modifier) {
     if (state.selection.isEmpty() || state.pasteMode) return
     val layer = state.activeStack?.active ?: return
+    // On the original world there is nothing to show: lifting a selection to a layer, and Analyze, are in the right-click menu and the Selection tab.
+    if (layer !is ChunkLayer) return
     Row(
         modifier.overMap(state).clip(BAR_SHAPE).background(Color(0xE62B2D30)).border(1.dp, EditorTheme.border, BAR_SHAPE).padding(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (layer !is ChunkLayer) {
-            IconButton(Icons.NewLayer, "Copy the selection into a new layer, to turn or raise it there") {
-                if (state.copy()) state.pasteInPlace()
-            }
-            Txt("Lift to a layer to turn or raise", Modifier.padding(start = 4.dp, end = 8.dp), color = EditorTheme.textDim, size = 12.sp)
-            Divider()
-            AnalyzeButton(state)
-            return@Row
-        }
         val refs = state.transformTargets().values
         // Shift makes the steps bigger.
         fun step() = if (Key.ShiftLeft in state.heldKeys || Key.ShiftRight in state.heldKeys) 10 else 1

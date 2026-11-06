@@ -46,8 +46,9 @@ class ChunkTileCache(
         val surfaceKey get() = SurfaceKey(worldId, pos)
     }
     private data class SurfaceKey(val worldId: String, val pos: ChunkPos)
-    /** Chunk data of one kind: [blocks] false for the surface, true for the visible blocks. */
-    private data class DataKey(val worldId: String, val pos: ChunkPos, val blocks: Boolean)
+    /** What a chunk is loaded as: its surface, the blocks that can be seen from above, or every block down to the bottom (the caves). */
+    private enum class Data { Surface, Blocks, Deep }
+    private data class DataKey(val worldId: String, val pos: ChunkPos, val kind: Data)
     private class Job(val key: Key, val world: WorldSource, val priority: Float)
     private class Prefetch(val key: DataKey, val world: WorldSource)
     /** A block of chunks in view space; [rotation] keeps blocks of different rotations apart. */
@@ -195,9 +196,9 @@ class ChunkTileCache(
     fun prefetch(chunks: List<Pair<WorldSource, ChunkPos>>) {
         synchronized(lock) {
             prefetching = ArrayDeque(chunks.size)
-            val blocks = settings.mode != RenderMode.Map
+            val kind = dataOf(settings)
             for ((world, pos) in chunks) {
-                val key = DataKey(world.id, pos, blocks)
+                val key = DataKey(world.id, pos, kind)
                 if (key !in data && SurfaceKey(world.id, pos) !in empty) prefetching += Prefetch(key, world)
             }
             if (prefetching.isEmpty()) return
@@ -274,11 +275,18 @@ class ChunkTileCache(
         val key = work.job.key
         val settings = work.settings
         val tile = runCatching {
+            if (settings.cave) {
+                // The Cave view of any mode: the colors of the blocks, or their textures in the Textured mode.
+                return@runCatching (load(work.job.world, DataKey(key.worldId, key.pos, Data.Deep)) as ChunkBlocks?)?.let {
+                    val models = if (settings.mode == RenderMode.Textured) work.textures[TransformedChunk.baseId(key.worldId)] else null
+                    CaveTileRenderer.render(it.rotated(key.rotation), key.lod, settings, models, key.rotation)
+                }
+            }
             when (settings.mode) {
-                RenderMode.Map -> (load(work.job.world, DataKey(key.worldId, key.pos, blocks = false)) as ChunkSurface?)?.let {
+                RenderMode.Map -> (load(work.job.world, DataKey(key.worldId, key.pos, Data.Surface)) as ChunkSurface?)?.let {
                     ChunkTileRenderer.render(it.rotated(key.rotation), key.lod, settings)
                 }
-                RenderMode.Blocks, RenderMode.Textured -> (load(work.job.world, DataKey(key.worldId, key.pos, blocks = true)) as ChunkBlocks?)?.let {
+                RenderMode.Blocks, RenderMode.Textured -> (load(work.job.world, DataKey(key.worldId, key.pos, Data.Blocks)) as ChunkBlocks?)?.let {
                     val models = if (settings.mode == RenderMode.Textured) work.textures[TransformedChunk.baseId(key.worldId)] ?: FlatModels else FlatModels
                     BlockTileRenderer.render(it.rotated(key.rotation), key.rotation, key.lod, settings, models)
                 }
@@ -342,7 +350,11 @@ class ChunkTileCache(
             loading += key
         }
         val loaded: Any? = try {
-            if (key.blocks) world.loadBlocks(key.pos) else world.loadSurface(key.pos)
+            when (key.kind) {
+                Data.Surface -> world.loadSurface(key.pos)
+                Data.Blocks -> world.loadBlocks(key.pos)
+                Data.Deep -> world.loadCaves(key.pos)
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             null
@@ -370,6 +382,12 @@ class ChunkTileCache(
     }
 
     companion object {
+        private fun dataOf(settings: RenderSettings) = when {
+            settings.cave -> Data.Deep
+            settings.mode == RenderMode.Map -> Data.Surface
+            else -> Data.Blocks
+        }
+
         /** Blocks of this many chunks squared are composited into one image, */
         const val BLOCK_SIZE = 8
         /** at LODs up to this one, where there are many small tiles on screen. */

@@ -28,6 +28,10 @@ data class RenderSettings(
     val mode: RenderMode = RenderMode.Map,
     /** Straight from above (2D) instead of the isometric view; works with every [mode]. */
     val flat: Boolean = false,
+    /** The Cave view, with any [mode]: the ground is see-through and the caves are drawn, as colors, or with the Textured mode as textures. */
+    val cave: Boolean = false,
+    /** The Cave view: also draw the surface as a faint see-through trace. Off: only the caves. */
+    val caveSurface: Boolean = false,
 )
 
 /**

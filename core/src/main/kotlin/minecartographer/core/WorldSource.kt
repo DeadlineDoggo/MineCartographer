@@ -36,6 +36,9 @@ interface WorldSource {
     /** The chunk's visible blocks; worlds without block data build them from the surface. May hit the disk too. */
     fun loadBlocks(pos: ChunkPos): ChunkBlocks? = loadSurface(pos)?.let(ChunkBlocks::fromSurface)
 
+    /** The chunk's blocks all the way down, caves included, for the Cave view. Worlds without block data have none, so no caves. */
+    fun loadCaves(pos: ChunkPos): ChunkBlocks? = loadBlocks(pos)
+
     /** How many of each block the chunk holds (air left out); worlds without block data count what they draw. */
     fun countBlocks(pos: ChunkPos): Map<BlockState, Int>? = loadBlocks(pos)?.let { b ->
         val counts = HashMap<BlockState, Int>()
