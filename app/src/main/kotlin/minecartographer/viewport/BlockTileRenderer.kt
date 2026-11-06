@@ -8,6 +8,7 @@ import minecartographer.textures.BlockModelSource
 import minecartographer.textures.Connections
 import minecartographer.textures.Dir
 import minecartographer.textures.Quad
+import minecartographer.textures.Texture
 import java.util.BitSet
 import kotlin.math.ceil
 import kotlin.math.floor
@@ -29,12 +30,24 @@ object BlockTileRenderer {
     private const val BOTTOM_SHADE = 0.5f
     private const val BORDER_ALPHA = 0x48
 
-    fun render(blocks: ChunkBlocks, turns: Int, lod: Int, settings: RenderSettings, models: BlockModelSource): ChunkTile {
+    /** A texture of gray squares, the checkerboard that stands for "nothing is known here". */
+    private val CHECKER = Texture(16, listOf(IntArray(256) { if ((it % 16 / 4 + it / 16 / 4) % 2 == 0) 0xFF9A9A9A.toInt() else 0xFF5E5E5E.toInt() }), true)
+    private val UV = floatArrayOf(0f, 0f, 16f, 0f, 0f, 16f)
+    private val CHECKER_EAST = Quad(floatArrayOf(1f, 1f, 0f, 1f, 1f, 1f, 1f, 0f, 0f), UV, CHECKER, 0, -1, true, -1, 1f, 0f, 0f)
+    private val CHECKER_SOUTH = Quad(floatArrayOf(0f, 1f, 1f, 1f, 1f, 1f, 0f, 0f, 1f), UV, CHECKER, 0, -1, true, -1, 0f, 0f, 1f)
+
+    /**
+     * [unknownBelow]: how many blocks of checkerboard to draw down the east and south sides under the chunk's lowest
+     * block. A chunk that ends above the bottom of the world (a raised one with nothing below it) has nothing known
+     * there, and the sides must not look as if the ground simply ended.
+     */
+    fun render(blocks: ChunkBlocks, turns: Int, lod: Int, settings: RenderSettings, models: BlockModelSource, unknownBelow: Int = 0): ChunkTile {
         val hs = settings.heightScale.toDouble()
         val flat = settings.flat
         // One block of headroom: some models (fences, walls) reach a little above their block.
         val top = blocks.maxY + 2
-        val base = blocks.minY
+        val unknown = if (settings.flat) 0 else unknownBelow
+        val base = blocks.minY - unknown
         val width = 32 * lod
         val height = if (flat) width else ceil((16 + (top - base) * hs) * lod).toInt() + 1
         val raster = Raster(width, height)
@@ -119,6 +132,12 @@ object BlockTileRenderer {
         val pixels = raster.pixels
         val mask = BitSet(pixels.size)
         for (i in pixels.indices) if (pixels[i] ushr 24 != 0) mask.set(i)
+
+        // Last, so it lies behind everything, and after the mask, so that clicking it picks what is in front: the walls of what is not known.
+        for (y in blocks.minY - unknown until blocks.minY) for (i in 0..15) {
+            raster.quad(projection, 15, y, i, CHECKER_EAST, shadeOf(CHECKER_EAST), 0, opaque = false)
+            raster.quad(projection, i, y, 15, CHECKER_SOUTH, shadeOf(CHECKER_SOUTH), 0, opaque = false)
+        }
         return ChunkTile(
             lod = lod,
             image = imageOf(pixels, width, height),

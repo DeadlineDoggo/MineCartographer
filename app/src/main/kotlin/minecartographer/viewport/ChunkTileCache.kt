@@ -196,9 +196,8 @@ class ChunkTileCache(
     fun prefetch(chunks: List<Pair<WorldSource, ChunkPos>>) {
         synchronized(lock) {
             prefetching = ArrayDeque(chunks.size)
-            val kind = dataOf(settings)
             for ((world, pos) in chunks) {
-                val key = DataKey(world.id, pos, kind)
+                val key = DataKey(world.id, pos, dataOf(settings, world.id))
                 if (key !in data && SurfaceKey(world.id, pos) !in empty) prefetching += Prefetch(key, world)
             }
             if (prefetching.isEmpty()) return
@@ -286,9 +285,13 @@ class ChunkTileCache(
                 RenderMode.Map -> (load(work.job.world, DataKey(key.worldId, key.pos, Data.Surface)) as ChunkSurface?)?.let {
                     ChunkTileRenderer.render(it.rotated(key.rotation), key.lod, settings)
                 }
-                RenderMode.Blocks, RenderMode.Textured -> (load(work.job.world, DataKey(key.worldId, key.pos, Data.Blocks)) as ChunkBlocks?)?.let {
+                RenderMode.Blocks, RenderMode.Textured -> (load(work.job.world, DataKey(key.worldId, key.pos, dataOf(settings, key.worldId))) as ChunkBlocks?)?.let {
                     val models = if (settings.mode == RenderMode.Textured) work.textures[TransformedChunk.baseId(key.worldId)] ?: FlatModels else FlatModels
-                    BlockTileRenderer.render(it.rotated(key.rotation), key.rotation, key.lod, settings, models)
+                    // A moved chunk is read all the way down, so its edges show their real walls. Where any chunk's data ends
+                    // above the bottom of the world, the rest of its wall is a checkerboard: it shows where a neighbor was
+                    // taken away or lowered, instead of the void.
+                    val unknown = if (it.minY > work.job.world.minY) UNKNOWN_WALL else 0
+                    BlockTileRenderer.render(it.rotated(key.rotation), key.rotation, key.lod, settings, models, unknown)
                 }
             }
         }.onFailure { it.printStackTrace() }.getOrNull()
@@ -382,9 +385,16 @@ class ChunkTileCache(
     }
 
     companion object {
-        private fun dataOf(settings: RenderSettings) = when {
+        /** Chunks laid out by a layer (pasted, turned, raised) have a world id of their own, with a `#`. */
+        private fun isMoved(worldId: String) = '#' in worldId
+
+        /** Blocks of checkerboard on the sides of a chunk under its lowest block. */
+        private const val UNKNOWN_WALL = 32
+
+        private fun dataOf(settings: RenderSettings, worldId: String) = when {
             settings.cave -> Data.Deep
             settings.mode == RenderMode.Map -> Data.Surface
+            isMoved(worldId) -> Data.Deep
             else -> Data.Blocks
         }
 
