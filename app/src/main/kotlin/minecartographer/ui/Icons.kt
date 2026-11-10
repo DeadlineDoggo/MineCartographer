@@ -94,6 +94,13 @@ object Icons {
         drawPath(poly(0.96f, 0.5f, 0.68f, 0.5f, 0.82f, 0.28f), color)
     }
 
+    /** A circled "i". */
+    val Info = EditorIcon { color ->
+        drawCircle(color, radius = size.minDimension * 0.42f, style = stroke())
+        line(color, 0.5f, 0.46f, 0.5f, 0.72f)
+        drawCircle(color, radius = size.minDimension * 0.06f, center = Offset(size.width * 0.5f, size.height * 0.3f))
+    }
+
     /** A chevron pointing up or down. */
     val ChevronUp = EditorIcon { color -> line(color, 0.18f, 0.66f, 0.5f, 0.34f); line(color, 0.5f, 0.34f, 0.82f, 0.66f) }
     val ChevronDown = EditorIcon { color -> line(color, 0.18f, 0.34f, 0.5f, 0.66f); line(color, 0.5f, 0.66f, 0.82f, 0.34f) }
