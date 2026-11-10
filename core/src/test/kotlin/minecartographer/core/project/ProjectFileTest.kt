@@ -8,6 +8,10 @@ import minecartographer.core.edit.ChunkEdit
 import minecartographer.core.edit.ChunkLayer
 import minecartographer.core.edit.ChunkRef
 import minecartographer.core.edit.LayerStack
+import minecartographer.core.markers.OwnWaypoint
+import minecartographer.core.markers.WaypointData
+import minecartographer.core.markers.WaypointKey
+import minecartographer.core.markers.WaypointOverlay
 import org.w3c.dom.Element
 import java.nio.file.Files
 import javax.xml.parsers.DocumentBuilderFactory
@@ -55,6 +59,27 @@ class ProjectFileTest {
         val restored = doc.stacks(listOf(valley, hills))
         assertEquals(0, restored.missingChunks)
         assertEquals(listOf(stack, LayerStack.of(hills)), restored.stacks)
+    }
+
+    @Test
+    fun `waypoint changes survive a round trip, per world`() {
+        val key = WaypointKey("Xaero's Minimap", "waypoints.txt", "Ho:me <&\">", 1, null, -3)
+        val overlay = WaypointOverlay()
+            .edit(key, WaypointData("Base", 5, null, 7, 0x55FF55))
+            .delete(WaypointKey("JourneyMap", "a.json", "Old", 9, 70, 9))
+            .let { it.copy(own = listOf(OwnWaypoint(4, WaypointData("Mine é", -1, 12, 2, 0x0000AA), issue = true)), nextId = 5) }
+        ProjectFile.write(file, ProjectSnapshot(listOf(LayerStack.of(valley), LayerStack.of(hills)), valley, emptySet(), emptyMap(),
+            waypoints = mapOf(valley to overlay)), "test")
+
+        val doc = ProjectFile.read(file)
+        assertEquals(listOf(overlay, WaypointOverlay()), doc.waypoints)
+    }
+
+    @Test
+    fun `a project without waypoint changes reads as an empty overlay`() {
+        ProjectFile.write(file, ProjectSnapshot(listOf(LayerStack.of(valley)), valley, emptySet(), emptyMap()), "test")
+        assertEquals(listOf(WaypointOverlay()), ProjectFile.read(file).waypoints)
+        assertTrue("waypoints" !in file.readText())
     }
 
     @Test

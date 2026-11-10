@@ -54,7 +54,7 @@ object MarkerReader {
     }
 
     /** The game folder when the world is in its `saves` folder (that is where the mods keep their files), else null. */
-    private fun gameFolder(world: Path): Path? {
+    fun gameFolder(world: Path): Path? {
         val saves = world.toAbsolutePath().normalize().parent ?: return null
         return if (saves.name == "saves") saves.parent else null
     }

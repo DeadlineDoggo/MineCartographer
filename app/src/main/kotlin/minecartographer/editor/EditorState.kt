@@ -23,6 +23,7 @@ import minecartographer.core.anvil.AnvilWorld
 import minecartographer.core.markers.Marker
 import minecartographer.core.markers.MarkerKind
 import minecartographer.core.markers.MarkerReader
+import minecartographer.core.markers.WaypointOverlay
 import minecartographer.core.anvil.WorldExporter
 import minecartographer.core.anvil.WorldInfo
 import java.nio.file.Path
@@ -211,20 +212,53 @@ class EditorState {
     var showWaypoints by mutableStateOf(true)
     var showBanners by mutableStateOf(true)
 
-    /** The markers of the active world that are switched on. */
+    /** What was changed about the waypoints of each open world (by world id); worlds without changes are not in it. Saved in the project. */
+    val waypointOverlays = mutableStateMapOf<String, WaypointOverlay>()
+
+    /** The markers of the active world that are switched on, waypoints with the project's changes applied. */
     fun visibleMarkers(): List<Marker> {
-        val all = activeWorld?.let { markers[it.id] }.orEmpty()
-        return all.filter { if (it.kind == MarkerKind.Banner) showBanners else showWaypoints }
+        val world = activeWorld ?: return emptyList()
+        val all = markers[world.id].orEmpty()
+        val overlay = waypointOverlays[world.id]
+        val shown = if (overlay == null) all else all.filter { it.kind == MarkerKind.Banner } + overlay.apply(all).map { it.marker }
+        return shown.filter { if (it.kind == MarkerKind.Banner) showBanners else showWaypoints }
+    }
+
+    /** Changes the waypoint overlay of [world]; the project counts as changed when [change] made a difference. */
+    fun updateWaypoints(world: WorldSource, change: (WaypointOverlay) -> WaypointOverlay) {
+        val old = waypointOverlays[world.id] ?: WaypointOverlay()
+        val next = change(old)
+        if (next == old) return
+        if (next.isEmpty) waypointOverlays.remove(world.id) else waypointOverlays[world.id] = next
+        changed()
+    }
+
+    /** Reads the waypoints and banners of [world] in the background, then checks the project's waypoint changes against them. */
+    private fun loadMarkers(world: WorldSource) {
+        if (world !is AnvilWorld) return
+        scope.launch(Dispatchers.IO) {
+            val found = runCatching { MarkerReader.read(world.folder, world.name) }.getOrDefault(emptyList())
+            // Without the game folder the mods' files can't be seen, so a missing waypoint proves nothing: leave the changes alone.
+            val modFilesVisible = MarkerReader.gameFolder(world.folder) != null
+            withContext(Dispatchers.Main) {
+                if (worlds.none { it.id == world.id }) return@withContext
+                if (found.isNotEmpty()) markers[world.id] = found
+                if (modFilesVisible) waypointOverlays[world.id]?.let { overlay ->
+                    val checked = overlay.reconcile(found)
+                    if (checked !== overlay) {
+                        waypointOverlays[world.id] = checked
+                        changed()
+                    }
+                }
+            }
+        }
     }
 
     fun addWorld(world: WorldSource) {
         if (worlds.none { it.id == world.id }) {
             worlds += world
             stacks[world.id] = LayerStack.of(world)
-            if (world is AnvilWorld) scope.launch(Dispatchers.IO) {
-                val found = runCatching { MarkerReader.read(world.folder, world.name) }.getOrDefault(emptyList())
-                if (found.isNotEmpty()) markers[world.id] = found
-            }
+            loadMarkers(world)
             changed()
             refreshTextures()
         }
@@ -306,6 +340,7 @@ class EditorState {
         worlds.remove(world)
         stacks.remove(world.id)
         markers.remove(world.id)
+        waypointOverlays.remove(world.id)
         worldTextures.remove(world.id)
         refreshTextures()
         (world as? AnvilWorld)?.close()
@@ -1376,7 +1411,8 @@ class EditorState {
     /** Writes the project to [file]; returns false (with a message) when that fails. */
     fun saveProject(file: Path): Boolean {
         val (tabs, activeTab) = tabsSnapshot()
-        val snapshot = ProjectSnapshot(worlds.mapNotNull { stacks[it.id] }, activeWorld, selection, editorSettings(), worlds.associateWith(::texturesOf), tabs, activeTab)
+        val snapshot = ProjectSnapshot(worlds.mapNotNull { stacks[it.id] }, activeWorld, selection, editorSettings(), worlds.associateWith(::texturesOf), tabs, activeTab,
+            worlds.mapNotNull { w -> waypointOverlays[w.id]?.let { w to it } }.toMap())
         return runCatching { ProjectFile.write(file, snapshot, AppInfo.version) }
             .onSuccess {
                 projectFile = file
@@ -1439,6 +1475,8 @@ class EditorState {
         val restored = doc.stacks(opened)
         replaceWorlds(opened.filterNotNull().map { w -> restored.stacks.firstOrNull { it.world == w } ?: LayerStack.of(w) })
         for ((world, textures) in opened.zip(doc.textures)) if (world != null && !textures.isDefault) worldTextures[world.id] = textures
+        for ((world, overlay) in opened.zip(doc.waypoints)) if (world != null && !overlay.isEmpty) waypointOverlays[world.id] = overlay
+        for (world in worlds) loadMarkers(world)
         applyEditorSettings(doc.editor)
         refreshTextures()
         projectFile = file
@@ -1477,6 +1515,8 @@ class EditorState {
         stacks.clear()
         worldTextures.clear()
         loadedTextures.clear()
+        waypointOverlays.clear()
+        markers.keys.retainAll(next.mapTo(HashSet()) { it.world.id })
         for (stack in next) if (worlds.none { it.id == stack.world.id }) {
             worlds += stack.world
             stacks[stack.world.id] = stack

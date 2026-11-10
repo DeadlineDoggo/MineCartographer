@@ -10,6 +10,10 @@ import minecartographer.core.edit.ChunkLayer
 import minecartographer.core.edit.ChunkRef
 import minecartographer.core.edit.Layer
 import minecartographer.core.edit.LayerStack
+import minecartographer.core.markers.OwnWaypoint
+import minecartographer.core.markers.WaypointData
+import minecartographer.core.markers.WaypointKey
+import minecartographer.core.markers.WaypointOverlay
 import org.w3c.dom.Document
 import org.w3c.dom.Element
 import java.nio.file.Files
@@ -95,6 +99,8 @@ class ProjectSnapshot(
     val tabs: List<ProjectTab> = emptyList(),
     /** Index into [tabs] of the one that was shown. */
     val activeTab: Int? = null,
+    /** What was changed about each world's waypoints; worlds left out have no changes. */
+    val waypoints: Map<WorldSource, WaypointOverlay> = emptyMap(),
 )
 
 /** Layer stacks rebuilt from a project, plus what had to be left out. */
@@ -117,6 +123,8 @@ class ProjectDocument internal constructor(
     /** Tabs of the main area as saved; empty for a project from before they were kept. */
     val tabs: List<ProjectTab> = emptyList(),
     val activeTab: Int? = null,
+    /** Lines up with [worlds]. */
+    val waypoints: List<WaypointOverlay> = emptyList(),
 ) {
     /** Rebuilds the layer stacks; [opened] lines up with [worlds], null where a world could not be opened. */
     fun stacks(opened: List<WorldSource?>): RestoredStacks {
@@ -204,6 +212,7 @@ object ProjectFile {
                 null -> e.setAttribute("kind", "unknown")
             }
             project.textures[world]?.takeIf { !it.isDefault }?.let { e.writeTextures(doc, dir, it) }
+            project.waypoints[world]?.takeIf { !it.isEmpty }?.let { e.writeWaypoints(doc, it) }
         }
 
         for (stack in project.stacks) {
@@ -301,6 +310,7 @@ object ProjectFile {
         val ids = ArrayList<String>()
         val worlds = ArrayList<WorldLocation>()
         val textures = ArrayList<WorldTextures>()
+        val waypoints = ArrayList<WaypointOverlay>()
         for (e in worldsEl?.children("world").orEmpty()) {
             val loc = when (e.getAttribute("kind")) {
                 "folder" -> WorldLocation.Folder(e.readPath(dir) ?: continue)
@@ -310,6 +320,7 @@ object ProjectFile {
             ids += e.getAttribute("id")
             worlds += loc
             textures += e.children("textures").firstOrNull()?.readTextures(dir) ?: WorldTextures()
+            waypoints += e.children("waypoints").firstOrNull()?.readWaypoints() ?: WaypointOverlay()
         }
         val active = worldsEl?.getAttribute("active")?.let(ids::indexOf)?.takeIf { it >= 0 }
         val selection = root.children("selection").firstOrNull()?.textContent.orEmpty()
@@ -330,7 +341,7 @@ object ProjectFile {
                 e.children("setting").associate { it.getAttribute("key") to it.getAttribute("value") },
             )
         }
-        return ProjectDocument(worlds, textures, active, selection, editor, ids, root.children("stack"), tabs, tabsEl?.int("active"))
+        return ProjectDocument(worlds, textures, active, selection, editor, ids, root.children("stack"), tabs, tabsEl?.int("active"), waypoints)
     }
 
     /** Name of the file [writeSources] puts into an exported world. */
@@ -393,6 +404,55 @@ object ProjectFile {
             b.getAttribute("key").ifEmpty { null }?.let { k -> b.getAttribute("texture").ifEmpty { null }?.let { k to it } }
         }.toMap(),
     )
+
+    /** `<waypoints>`: an `<edit>` per changed or deleted mod waypoint (its key, then `deleted` or the new values) and an `<own>` per own one. A missing `y` means unknown. */
+    private fun Element.writeWaypoints(doc: Document, o: WaypointOverlay) {
+        fun Element.setData(d: WaypointData, prefix: String) {
+            setAttribute("${prefix}name", d.name)
+            setAttribute("${prefix}x", d.x.toString())
+            d.y?.let { setAttribute("${prefix}y", it.toString()) }
+            setAttribute("${prefix}z", d.z.toString())
+            setAttribute("${prefix}color", "#%06X".format(d.rgb and 0xFFFFFF))
+        }
+        val e = add(doc, "waypoints")
+        e.setAttribute("next-id", o.nextId.toString())
+        val order = compareBy<WaypointKey>({ it.source }, { it.file }, { it.name }, { it.x }, { it.z })
+        for ((key, data) in o.edits.entries.sortedWith { a, b -> order.compare(a.key, b.key) }) e.add(doc, "edit").apply {
+            setAttribute("source", key.source)
+            setAttribute("file", key.file)
+            setAttribute("name", key.name)
+            setAttribute("x", key.x.toString())
+            key.y?.let { setAttribute("y", it.toString()) }
+            setAttribute("z", key.z.toString())
+            if (data == null) setAttribute("deleted", "true") else setData(data, "new-")
+        }
+        for (own in o.own.sortedBy { it.id }) e.add(doc, "own").apply {
+            setAttribute("id", own.id.toString())
+            setData(own.data, "")
+            if (own.issue) setAttribute("issue", "true")
+        }
+    }
+
+    private fun Element.readWaypoints(): WaypointOverlay {
+        fun Element.data(prefix: String): WaypointData? {
+            val x = int("${prefix}x") ?: return null
+            val z = int("${prefix}z") ?: return null
+            val rgb = getAttribute("${prefix}color").removePrefix("#").toIntOrNull(16) ?: 0xFFFFFF
+            return WaypointData(getAttribute("${prefix}name"), x, int("${prefix}y"), z, rgb and 0xFFFFFF)
+        }
+        val edits = LinkedHashMap<WaypointKey, WaypointData?>()
+        for (e in children("edit")) {
+            val x = e.int("x") ?: continue
+            val z = e.int("z") ?: continue
+            val key = WaypointKey(e.getAttribute("source"), e.getAttribute("file"), e.getAttribute("name"), x, e.int("y"), z)
+            if (e.bool("deleted") == true) edits[key] = null else edits[key] = e.data("new-") ?: continue
+        }
+        val own = children("own").mapNotNull { e ->
+            val id = e.int("id") ?: return@mapNotNull null
+            e.data("")?.let { OwnWaypoint(id, it, e.bool("issue") ?: false) }
+        }.distinctBy { it.id }.sortedBy { it.id }
+        return WaypointOverlay(edits, own, maxOf(int("next-id") ?: 1, (own.maxOfOrNull { it.id } ?: 0) + 1))
+    }
 
     private fun Element.setPath(dir: Path?, path: Path) {
         val abs = path.toAbsolutePath().normalize()
