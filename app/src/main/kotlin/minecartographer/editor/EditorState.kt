@@ -774,6 +774,15 @@ class EditorState {
     /** The right-click menu on the map, while it is open. */
     var mapMenu by mutableStateOf<MapMenu?>(null)
 
+    /** The right-click menu of a pin on the map, while it is open. */
+    var markerMenu by mutableStateOf<MarkerMenu?>(null)
+
+    /** The marker whose right-click menu is open (on the map or in the Waypoints panel): its pin is outlined in blue. */
+    var menuMarker by mutableStateOf<Marker?>(null)
+
+    /** The marker under the pointer, on the map or in the Waypoints panel. */
+    var hoverMarker by mutableStateOf<Marker?>(null)
+
     /** Puts [text] on the system clipboard. */
     fun copyText(text: String) {
         runCatching { java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(java.awt.datatransfer.StringSelection(text), null) }
@@ -1715,3 +1724,6 @@ data class AnalyzeRequest(
 
 /** A right-click on the map at [at] (pixels in the map): the [chunk] under it, or null on empty ground, and the [ground] position. */
 class MapMenu(val at: IntOffset, val chunk: ChunkPos?, val ground: ChunkPos)
+
+/** A right-click on the pin of [marker] at [at] (pixels in the map). */
+class MarkerMenu(val at: IntOffset, val marker: Marker)

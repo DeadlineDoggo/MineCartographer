@@ -28,11 +28,13 @@ data class WaypointKey(val source: String, val file: String, val name: String, v
 
 /**
  * A named place in the overworld: [y] is null when the source does not know the height. [rgb] is 0xRRGGBB.
- * [key] is set for waypoints read from a mod file, null for map banners.
+ * [key] is set for waypoints read from a mod file, null for map banners. [modifiedMillis] is when the waypoint's own
+ * file was last changed, known only for JourneyMap (Xaero keeps all waypoints in one file, the mods store no creation date).
  */
 data class Marker(
     val kind: MarkerKind, val name: String, val x: Int, val y: Int?, val z: Int, val rgb: Int, val source: String,
     val key: WaypointKey? = null,
+    val modifiedMillis: Long? = null,
 )
 
 /**
@@ -149,13 +151,13 @@ object MarkerReader {
             val dir = world.resolve("waypoints")
             if (!dir.exists()) continue
             for (file in dir.listDirectoryEntries("*.json").filter { it.extension == "json" }) {
-                result += journeyMapFile(file.readText(), file.name) ?: continue
+                result += journeyMapFile(file.readText(), file.name, runCatching { Files.getLastModifiedTime(file).toMillis() }.getOrNull()) ?: continue
             }
         }
         return result
     }
 
-    internal fun journeyMapFile(json: String, file: String = ""): Marker? {
+    internal fun journeyMapFile(json: String, file: String = "", modifiedMillis: Long? = null): Marker? {
         fun text(key: String) = Regex("\"$key\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").find(json)?.groupValues?.get(1)
         fun number(key: String) = Regex("\"$key\"\\s*:\\s*(-?\\d+)").find(json)?.groupValues?.get(1)?.toIntOrNull()
         if (Regex("\"enable\"\\s*:\\s*false").containsMatchIn(json)) return null
@@ -166,6 +168,6 @@ object MarkerReader {
         val rgb = ((number("r") ?: 255) shl 16) or ((number("g") ?: 255) shl 8) or (number("b") ?: 255)
         val name = plainText("\"" + (text("name") ?: "Waypoint") + "\"")
         val y = number("y")
-        return Marker(MarkerKind.Waypoint, name, x, y, z, rgb and 0xFFFFFF, JOURNEYMAP, WaypointKey(JOURNEYMAP, file, name, x, y, z))
+        return Marker(MarkerKind.Waypoint, name, x, y, z, rgb and 0xFFFFFF, JOURNEYMAP, WaypointKey(JOURNEYMAP, file, name, x, y, z), modifiedMillis)
     }
 }

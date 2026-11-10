@@ -94,6 +94,10 @@ object Icons {
         drawPath(poly(0.96f, 0.5f, 0.68f, 0.5f, 0.82f, 0.28f), color)
     }
 
+    /** A chevron pointing up or down. */
+    val ChevronUp = EditorIcon { color -> line(color, 0.18f, 0.66f, 0.5f, 0.34f); line(color, 0.5f, 0.34f, 0.82f, 0.66f) }
+    val ChevronDown = EditorIcon { color -> line(color, 0.18f, 0.34f, 0.5f, 0.66f); line(color, 0.5f, 0.66f, 0.82f, 0.34f) }
+
     val Copy = EditorIcon { color ->
         drawRect(color, topLeft = Offset(size.width * 0.32f, size.height * 0.32f),
             size = Size(size.width * 0.58f, size.height * 0.58f), style = stroke())

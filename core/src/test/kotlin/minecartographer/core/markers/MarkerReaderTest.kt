@@ -76,7 +76,9 @@ class MarkerReaderTest {
         dir.resolve("a.json").writeText("""{"name":"Farm","x":-40,"y":70,"z":12,"r":0,"g":255,"b":0,"enable":true,"dimensions":["minecraft:overworld"]}""")
         dir.resolve("b.json").writeText("""{"name":"Nether","x":1,"y":1,"z":1,"enable":true,"dimensions":["minecraft:the_nether"]}""")
         val key = WaypointKey("JourneyMap", "a.json", "Farm", -40, 70, 12)
-        assertEquals(listOf(Marker(MarkerKind.Waypoint, "Farm", -40, 70, 12, 0x00FF00, "JourneyMap", key)), MarkerReader.read(world))
+        val read = MarkerReader.read(world)
+        assertEquals(listOf(Marker(MarkerKind.Waypoint, "Farm", -40, 70, 12, 0x00FF00, "JourneyMap", key)), read.map { it.copy(modifiedMillis = null) })
+        assertEquals(true, read.single().modifiedMillis != null, "JourneyMap has a file per waypoint, so it has a date")
     }
 
     @Test

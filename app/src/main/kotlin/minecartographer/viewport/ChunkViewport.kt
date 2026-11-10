@@ -33,6 +33,7 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import minecartographer.core.ChunkPos
+import minecartographer.core.markers.Marker
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.rememberTextMeasurer
 import minecartographer.core.Rotation
@@ -42,6 +43,7 @@ import minecartographer.core.edit.ChunkRef
 import minecartographer.core.edit.LayerStack
 import minecartographer.editor.EditorState
 import minecartographer.editor.MapMenu
+import minecartographer.editor.MarkerMenu
 import minecartographer.editor.SelectMode
 import minecartographer.editor.Tool
 import minecartographer.ui.EditorTheme
@@ -178,6 +180,12 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
     }
 
     /** Chunk under the cursor on a flat plane at surface height, for empty areas and smooth dragging. */
+    /** The pin under [p], if the pins are shown. */
+    fun pickPin(p: Offset): Marker? = pickMarker(
+        state.visibleMarkers(), p, state.view, state.renderSettings.heightScale.toDouble(), state.rotation,
+        state.viewportSize.width.toFloat(), state.viewportSize.height.toFloat(), measurer, markerLabels,
+    )
+
     fun pickGround(p: Offset, width: Float, height: Float): ChunkPos {
         val hs = state.renderSettings.heightScale.toDouble()
         val view = state.view
@@ -229,6 +237,8 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                 var moveStart = ChunkPos(0, 0)
                 // Where the right button went down: the menu opens when it comes up.
                 var menuAt: Offset? = null
+                // The pin under the pointer when the right button went down: its menu opens instead of the map's.
+                var menuPin: Marker? = null
                 awaitPointerEventScope {
                     while (true) {
                         val event = awaitPointerEvent()
@@ -259,6 +269,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                                     b.isTertiaryPressed -> Drag.Pan
                                     b.isSecondaryPressed -> {
                                         menuAt = p
+                                        menuPin = pickPin(p)
                                         Drag.None
                                     }
                                     !b.isPrimaryPressed -> Drag.None
@@ -312,6 +323,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                                 last = p
                                 val hit = if (drag == Drag.None && onControl(p)) null else pick(p)
                                 state.hovered = hit
+                                state.hoverMarker = if (drag == Drag.None && !onControl(p)) pickPin(p) else null
                                 if (state.pasteMode) state.pasteAnchor = hit ?: pickGround(p, w, h)
                             }
                             PointerEventType.Release -> {
@@ -319,7 +331,13 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                                 val at = menuAt
                                 if (at != null && !b.isSecondaryPressed) {
                                     menuAt = null
-                                    state.mapMenu = MapMenu(IntOffset(at.x.roundToInt(), at.y.roundToInt()), pick(at), pickGround(at, w, h))
+                                    val pin = menuPin
+                                    menuPin = null
+                                    val where = IntOffset(at.x.roundToInt(), at.y.roundToInt())
+                                    if (pin != null) {
+                                        state.markerMenu = MarkerMenu(where, pin)
+                                        state.menuMarker = pin
+                                    } else state.mapMenu = MapMenu(where, pick(at), pickGround(at, w, h))
                                 }
                                 if (!b.isPrimaryPressed && !b.isSecondaryPressed && !b.isTertiaryPressed) {
                                     when (drag) {
@@ -333,7 +351,10 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                                     drag = Drag.None
                                 }
                             }
-                            PointerEventType.Exit -> state.hovered = null
+                            PointerEventType.Exit -> {
+                                state.hovered = null
+                                state.hoverMarker = null
+                            }
                         }
                     }
                 }
@@ -485,7 +506,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
             }
         }
 
-        drawMarkers(state.visibleMarkers(), view, hs, rotation, measurer, markerLabels)
+        drawMarkers(state.visibleMarkers(), view, hs, rotation, measurer, markerLabels, state.hoverMarker, state.menuMarker)
 
         if (prefetch.update(view, stack, rotation, size.width, size.height)) {
             val around = view.visibleChunks(size.width * PREFETCH_SCALE, size.height * PREFETCH_SCALE, VIEW_MIN_Y, VIEW_MAX_Y, hs)

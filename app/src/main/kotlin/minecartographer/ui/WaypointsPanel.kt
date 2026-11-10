@@ -1,6 +1,9 @@
 package minecartographer.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -18,7 +21,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -78,6 +84,8 @@ private fun WaypointsPanel(
     state: EditorState, world: WorldSource, waypoints: List<Pair<Marker, WaypointOrigin>>, banners: List<Marker>, modifier: Modifier,
 ) {
     var filter by remember { mutableStateOf("") }
+    // The rows whose details are open.
+    val open = remember { mutableStateMapOf<Marker, Unit>() }
     val density = LocalDensity.current
     // Where the panel ends: the spot a row moves to is centered in the map that stays visible.
     val inset = with(density) { (state.waypointsWidth + 5.dp).toPx() }
@@ -103,10 +111,16 @@ private fun WaypointsPanel(
             ScrollList(Modifier.weight(1f).fillMaxWidth()) {
                 item { SectionTitle("Waypoints (${shownWaypoints.size})") }
                 if (shownWaypoints.isEmpty()) item { Txt(if (waypoints.isEmpty()) "None found." else "No waypoint matches.", Modifier.padding(8.dp), color = EditorTheme.textFaint, size = 12.sp) }
-                items(shownWaypoints.size) { i -> WaypointRow(state, shownWaypoints[i].first, shownWaypoints[i].second, inset) }
+                items(shownWaypoints.size) { i ->
+                    val m = shownWaypoints[i].first
+                    WaypointRow(state, m, shownWaypoints[i].second, inset, m in open) { if (m in open) open.remove(m) else open[m] = Unit }
+                }
                 if (banners.isNotEmpty()) {
                     item { SectionTitle("Map banners (${shownBanners.size})") }
-                    items(shownBanners.size) { i -> WaypointRow(state, shownBanners[i], null, inset) }
+                    items(shownBanners.size) { i ->
+                        val m = shownBanners[i]
+                        WaypointRow(state, m, null, inset, m in open) { if (m in open) open.remove(m) else open[m] = Unit }
+                    }
                 }
             }
         }
@@ -116,20 +130,73 @@ private fun WaypointsPanel(
 @Composable
 private fun SectionTitle(text: String) = Txt(text, Modifier.padding(top = 8.dp, bottom = 2.dp, start = 4.dp), color = EditorTheme.textDim, size = 11.sp, weight = FontWeight.SemiBold)
 
-/** [origin] is null for a banner; a waypoint changed in the app says so. */
+/**
+ * A waypoint or banner row ([origin] is null for a banner; a waypoint changed in the app says so). A click moves the map
+ * to it; the chevron at the end opens its details, which can be copied. Hovering outlines its pin on the map.
+ */
 @Composable
-private fun WaypointRow(state: EditorState, m: Marker, origin: WaypointOrigin?, inset: Float) {
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable { state.centerOn(m.x, m.y, m.z, inset) }.padding(horizontal = 8.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFF000000.toInt() or m.rgb)).border(1.dp, Color.White.copy(alpha = 0.6f), CircleShape))
-        Spacer(Modifier.width(8.dp))
-        Column(Modifier.weight(1f)) {
-            Txt(m.name)
-            val note = if (origin == null || origin == WaypointOrigin.Mod) m.source else "${m.source} · ${origin.label}"
-            Txt(note, color = EditorTheme.textFaint, size = 11.sp)
+private fun WaypointRow(state: EditorState, m: Marker, origin: WaypointOrigin?, inset: Float, open: Boolean, onToggle: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val hovered by interaction.collectIsHoveredAsState()
+    // The pin on the map is outlined while the pointer is on the row.
+    LaunchedEffect(hovered, m) { if (hovered) state.hoverMarker = m }
+    DisposableEffect(m) { onDispose { if (state.hoverMarker == m) state.hoverMarker = null } }
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).background(if (hovered || open) EditorTheme.hover else Color.Transparent)) {
+        Row(
+            Modifier.fillMaxWidth().hoverable(interaction).clickable(interaction, indication = null) { state.centerOn(m.x, m.y, m.z, inset) }
+                .padding(start = 8.dp, top = 3.dp, bottom = 3.dp, end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFF000000.toInt() or m.rgb)).border(1.dp, Color.White.copy(alpha = 0.6f), CircleShape))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Txt(m.name)
+                val note = if (origin == null || origin == WaypointOrigin.Mod) m.source else "${m.source} · ${origin.label}"
+                Txt(note, color = EditorTheme.textFaint, size = 11.sp)
+            }
+            Txt("${m.x} ${m.y ?: "~"} ${m.z}", color = EditorTheme.textDim, size = 12.sp, mono = true)
+            Spacer(Modifier.width(4.dp))
+            IconButton(if (open) Icons.ChevronUp else Icons.ChevronDown, if (open) "Hide the details" else "Show the details", size = 26.dp, iconSize = 13.dp, onClick = onToggle)
         }
-        Txt("${m.x} ${m.y ?: "~"} ${m.z}", color = EditorTheme.textDim, size = 12.sp, mono = true)
+        if (open) WaypointDetails(state, m)
     }
 }
+
+/** What is known about a marker, read only; the values that are worth pasting elsewhere have a copy button. */
+@Composable
+private fun WaypointDetails(state: EditorState, m: Marker) {
+    val position = "${m.x} ${m.y ?: "~"} ${m.z}"
+    val teleport = "/tp @s $position"
+    val hex = "#%06X".format(m.rgb and 0xFFFFFF)
+    Column(Modifier.fillMaxWidth().padding(start = 26.dp, end = 6.dp, bottom = 8.dp)) {
+        DetailLine("Position", position, copy = position, state = state, mono = true)
+        DetailLine("Teleport", teleport, copy = teleport, state = state, mono = true)
+        DetailLine("Name", m.name, copy = m.name, state = state)
+        Row(Modifier.fillMaxWidth().height(24.dp), verticalAlignment = Alignment.CenterVertically) {
+            Txt("Color", Modifier.width(96.dp), color = EditorTheme.textDim, size = 12.sp)
+            Box(Modifier.size(14.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xFF000000.toInt() or m.rgb)).border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(3.dp)))
+            Spacer(Modifier.width(8.dp))
+            Txt(hex, Modifier.weight(1f), size = 12.sp, mono = true)
+            CopyButton(state, hex)
+        }
+        DetailLine("Source", m.source, state = state)
+        m.key?.takeIf { it.file.isNotEmpty() }?.let { DetailLine("File", it.file, state = state) }
+        m.modifiedMillis?.let {
+            val at = java.time.LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(it), java.time.ZoneId.systemDefault())
+            DetailLine("File changed", at.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")), state = state)
+        }
+    }
+}
+
+@Composable
+private fun DetailLine(label: String, value: String, state: EditorState, copy: String? = null, mono: Boolean = false) {
+    Row(Modifier.fillMaxWidth().height(24.dp), verticalAlignment = Alignment.CenterVertically) {
+        Txt(label, Modifier.width(96.dp), color = EditorTheme.textDim, size = 12.sp)
+        Txt(value, Modifier.weight(1f), size = 12.sp, mono = mono)
+        if (copy != null) CopyButton(state, copy)
+    }
+}
+
+@Composable
+private fun CopyButton(state: EditorState, text: String) =
+    IconButton(Icons.Copy, "Copy", size = 22.dp, iconSize = 12.dp) { state.copyText(text) }

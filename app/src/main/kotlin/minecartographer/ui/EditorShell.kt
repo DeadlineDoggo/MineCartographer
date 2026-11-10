@@ -125,6 +125,7 @@ private fun EditorLayout(state: EditorState, onExit: () -> Unit) {
                             WaypointsDrawer(state)
                             BlockMappingDrawer(state)
                             MapContextMenu(state)
+                            MarkerContextMenu(state)
                         }
                         Workspace.Atlas -> AtlasView(state)
                         is Workspace.Model -> ModelWorkspaceView(state, workspace)
