@@ -23,6 +23,7 @@ import minecartographer.core.anvil.AnvilWorld
 import minecartographer.core.markers.Marker
 import minecartographer.core.markers.MarkerKind
 import minecartographer.core.markers.MarkerReader
+import minecartographer.core.markers.ShownWaypoint
 import minecartographer.core.markers.WaypointOverlay
 import minecartographer.core.anvil.WorldExporter
 import minecartographer.core.anvil.WorldInfo
@@ -215,13 +216,15 @@ class EditorState {
     /** What was changed about the waypoints of each open world (by world id); worlds without changes are not in it. Saved in the project. */
     val waypointOverlays = mutableStateMapOf<String, WaypointOverlay>()
 
+    /** The waypoints of [world] with the project's changes applied (what the map shows and an export would contain). */
+    fun shownWaypoints(world: WorldSource): List<ShownWaypoint> =
+        (waypointOverlays[world.id] ?: WaypointOverlay()).apply(markers[world.id].orEmpty())
+
     /** The markers of the active world that are switched on, waypoints with the project's changes applied. */
     fun visibleMarkers(): List<Marker> {
         val world = activeWorld ?: return emptyList()
-        val all = markers[world.id].orEmpty()
-        val overlay = waypointOverlays[world.id]
-        val shown = if (overlay == null) all else all.filter { it.kind == MarkerKind.Banner } + overlay.apply(all).map { it.marker }
-        return shown.filter { if (it.kind == MarkerKind.Banner) showBanners else showWaypoints }
+        val banners = if (showBanners) markers[world.id].orEmpty().filter { it.kind == MarkerKind.Banner } else emptyList()
+        return banners + if (showWaypoints) shownWaypoints(world).map { it.marker } else emptyList()
     }
 
     /** Changes the waypoint overlay of [world]; the project counts as changed when [change] made a difference. */
@@ -673,18 +676,25 @@ class EditorState {
     // The Mods & textures and Analyze selection panels share the place next to the left dock: one at a time.
     private var modsShown by mutableStateOf(false)
     private var analyzeShown by mutableStateOf(false)
+    private var waypointsShown by mutableStateOf(false)
 
     /** The Mods & textures panel over the map, and its width. */
     var modsPanelVisible: Boolean
         get() = modsShown
-        set(value) { modsShown = value; if (value) analyzeShown = false }
+        set(value) { modsShown = value; if (value) { analyzeShown = false; waypointsShown = false } }
     var modsPanelWidth by mutableStateOf(640.dp)
 
     /** The Analyze selection panel over the map, and its width. */
     var analyzeVisible: Boolean
         get() = analyzeShown
-        set(value) { analyzeShown = value; if (value) modsShown = false }
+        set(value) { analyzeShown = value; if (value) { modsShown = false; waypointsShown = false } }
     var analyzeWidth by mutableStateOf(720.dp)
+
+    /** The Waypoints panel over the map (shares the place with the two above), and its width. */
+    var waypointsVisible: Boolean
+        get() = waypointsShown
+        set(value) { waypointsShown = value; if (value) { modsShown = false; analyzeShown = false } }
+    var waypointsWidth by mutableStateOf(460.dp)
 
     /** What the Analyze panel counts. Fixed when asked for: changing the selection later doesn't read the chunks again. */
     var analyzeRequest by mutableStateOf<AnalyzeRequest?>(null)
@@ -1622,6 +1632,17 @@ class EditorState {
         val (cx, cz) = Rotation.point(rotation, centerX, centerZ)
         view = IsoView.centeredOn(cx, SURFACE_Y, cz, hs, zoom, flat)
         lastFitView = view
+    }
+
+    /**
+     * Moves the camera to the block ([x], [y], [z]), zoomed in at least a little. [leftInsetPx] is the width of a panel
+     * covering the map's left edge: the block ends up in the middle of the part that stays visible.
+     */
+    fun centerOn(x: Int, y: Int?, z: Int, leftInsetPx: Float = 0f) {
+        val hs = renderSettings.heightScale.toDouble()
+        val (rx, rz) = Rotation.point(rotation, x + 0.5, z + 0.5)
+        val target = IsoView.centeredOn(rx, y?.toDouble() ?: SURFACE_Y, rz, hs, maxOf(view.zoom, 3.0), renderSettings.flat)
+        view = target.copy(centerU = target.centerU - leftInsetPx / 2 / target.zoom)
     }
 
     /** Turns the view by [delta] quarter turns (+1 = clockwise on screen) around the point at the screen center. */

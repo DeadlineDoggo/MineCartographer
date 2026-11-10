@@ -130,7 +130,7 @@ private fun ModsPanel(state: EditorState, world: AnvilWorld, modifier: Modifier)
 
 /** A lazy list with a scrollbar on its right edge. */
 @Composable
-private fun ScrollList(modifier: Modifier, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
+internal fun ScrollList(modifier: Modifier, content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) {
     val list = rememberLazyListState()
     Box(modifier) {
         LazyColumn(Modifier.fillMaxSize().padding(end = 10.dp), list, verticalArrangement = Arrangement.spacedBy(2.dp), content = content)

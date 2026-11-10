@@ -122,6 +122,7 @@ private fun EditorLayout(state: EditorState, onExit: () -> Unit) {
                             ViewportOverlay(state)
                             ModsDrawer(state)
                             AnalyzeDrawer(state)
+                            WaypointsDrawer(state)
                             BlockMappingDrawer(state)
                             MapContextMenu(state)
                         }

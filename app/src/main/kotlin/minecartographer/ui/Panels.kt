@@ -337,7 +337,8 @@ fun ViewPanel(state: EditorState) {
             Checkbox("Show the surface as a faint trace over the caves", settings.caveSurface) { state.updateRenderSettings(settings.copy(caveSurface = it)) }
         }
         val found = state.activeWorld?.let { state.markers[it.id] }.orEmpty()
-        val count = { kind: MarkerKind -> found.count { it.kind == kind } }
+        val shown = state.activeWorld?.let { state.shownWaypoints(it) }.orEmpty()
+        val count = { kind: MarkerKind -> if (kind == MarkerKind.Waypoint) shown.size else found.count { it.kind == kind } }
         Checkbox("Waypoints (${count(MarkerKind.Waypoint)}): minimap mods", state.showWaypoints) { state.showWaypoints = it }
         Checkbox("Map banners (${count(MarkerKind.Banner)})", state.showBanners) { state.showBanners = it }
         Checkbox("Layer colors and erased chunks", state.showLayerColors) { state.showLayerColors = it }
