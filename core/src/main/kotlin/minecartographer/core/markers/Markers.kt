@@ -19,8 +19,21 @@ enum class MarkerKind(val label: String) {
     Banner("Map banners"),
 }
 
-/** A named place in the overworld: [y] is null when the source does not know the height. [rgb] is 0xRRGGBB. */
-data class Marker(val kind: MarkerKind, val name: String, val x: Int, val y: Int?, val z: Int, val rgb: Int, val source: String)
+/**
+ * Identity of a waypoint as a minimap mod stores it: the mod, the file inside its world folder, and the name and
+ * position it has there. Edits made in the app are kept against this key, so it must describe the waypoint as
+ * the mod file has it and never change when the app moves or renames it.
+ */
+data class WaypointKey(val source: String, val file: String, val name: String, val x: Int, val y: Int?, val z: Int)
+
+/**
+ * A named place in the overworld: [y] is null when the source does not know the height. [rgb] is 0xRRGGBB.
+ * [key] is set for waypoints read from a mod file, null for map banners.
+ */
+data class Marker(
+    val kind: MarkerKind, val name: String, val x: Int, val y: Int?, val z: Int, val rgb: Int, val source: String,
+    val key: WaypointKey? = null,
+)
 
 /**
  * Places that belong to a world but are not stored in its chunks: the banners on the world's filled maps
@@ -28,6 +41,9 @@ data class Marker(val kind: MarkerKind, val name: String, val x: Int, val y: Int
  * Only the overworld is read, which is the dimension the editor shows.
  */
 object MarkerReader {
+    const val XAERO = "Xaero's Minimap"
+    const val JOURNEYMAP = "JourneyMap"
+
     fun read(world: Path, levelName: String? = null): List<Marker> = buildList {
         runCatching { addAll(banners(world)) }
         val game = gameFolder(world)
@@ -102,13 +118,13 @@ object MarkerReader {
             val dir = game.resolve(root).resolve(worldFolder).resolve("dim%0")
             if (!dir.isDirectory()) continue
             for (file in dir.listDirectoryEntries("*.txt").sortedBy { it.name }) {
-                for (line in Files.readAllLines(file)) result += xaeroLine(line) ?: continue
+                for (line in Files.readAllLines(file)) result += xaeroLine(line, file.name) ?: continue
             }
         }
         return result.distinct()
     }
 
-    internal fun xaeroLine(line: String): Marker? {
+    internal fun xaeroLine(line: String, file: String = ""): Marker? {
         if (!line.startsWith("waypoint:")) return null
         val f = line.split(':')
         if (f.size < 7) return null
@@ -117,7 +133,8 @@ object MarkerReader {
         val z = f[5].toIntOrNull() ?: return null
         val name = f[1].replace("§§", ":").ifBlank { f[2] }
         val rgb = CHAT[(f[6].toIntOrNull() ?: 15).coerceIn(0, 15)]
-        return Marker(MarkerKind.Waypoint, name, x, f[4].toIntOrNull(), z, rgb, "Xaero's Minimap")
+        val y = f[4].toIntOrNull()
+        return Marker(MarkerKind.Waypoint, name, x, y, z, rgb, XAERO, WaypointKey(XAERO, file, name, x, y, z))
     }
 
     // ---- JourneyMap ----
@@ -132,13 +149,13 @@ object MarkerReader {
             val dir = world.resolve("waypoints")
             if (!dir.exists()) continue
             for (file in dir.listDirectoryEntries("*.json").filter { it.extension == "json" }) {
-                result += journeyMapFile(file.readText()) ?: continue
+                result += journeyMapFile(file.readText(), file.name) ?: continue
             }
         }
         return result
     }
 
-    internal fun journeyMapFile(json: String): Marker? {
+    internal fun journeyMapFile(json: String, file: String = ""): Marker? {
         fun text(key: String) = Regex("\"$key\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").find(json)?.groupValues?.get(1)
         fun number(key: String) = Regex("\"$key\"\\s*:\\s*(-?\\d+)").find(json)?.groupValues?.get(1)?.toIntOrNull()
         if (Regex("\"enable\"\\s*:\\s*false").containsMatchIn(json)) return null
@@ -147,6 +164,8 @@ object MarkerReader {
         val x = number("x") ?: return null
         val z = number("z") ?: return null
         val rgb = ((number("r") ?: 255) shl 16) or ((number("g") ?: 255) shl 8) or (number("b") ?: 255)
-        return Marker(MarkerKind.Waypoint, plainText("\"" + (text("name") ?: "Waypoint") + "\""), x, number("y"), z, rgb and 0xFFFFFF, "JourneyMap")
+        val name = plainText("\"" + (text("name") ?: "Waypoint") + "\"")
+        val y = number("y")
+        return Marker(MarkerKind.Waypoint, name, x, y, z, rgb and 0xFFFFFF, JOURNEYMAP, WaypointKey(JOURNEYMAP, file, name, x, y, z))
     }
 }

@@ -62,8 +62,10 @@ class MarkerReaderTest {
 
         val found = MarkerReader.read(world)
         assertEquals(listOf("Base", "Mine"), found.map { it.name })
-        assertEquals(Marker(MarkerKind.Waypoint, "Base", 100, 64, -200, 0xFF5555, "Xaero's Minimap"), found[0])
+        val key = WaypointKey("Xaero's Minimap", "mw\$default_1.txt", "Base", 100, 64, -200)
+        assertEquals(Marker(MarkerKind.Waypoint, "Base", 100, 64, -200, 0xFF5555, "Xaero's Minimap", key), found[0])
         assertEquals(null, found[1].y)
+        assertEquals(null, found[1].key?.y)
     }
 
     @Test
@@ -73,7 +75,17 @@ class MarkerReaderTest {
         val dir = game.resolve("journeymap/data/sp/My World/waypoints").also { it.createDirectories() }
         dir.resolve("a.json").writeText("""{"name":"Farm","x":-40,"y":70,"z":12,"r":0,"g":255,"b":0,"enable":true,"dimensions":["minecraft:overworld"]}""")
         dir.resolve("b.json").writeText("""{"name":"Nether","x":1,"y":1,"z":1,"enable":true,"dimensions":["minecraft:the_nether"]}""")
-        assertEquals(listOf(Marker(MarkerKind.Waypoint, "Farm", -40, 70, 12, 0x00FF00, "JourneyMap")), MarkerReader.read(world))
+        val key = WaypointKey("JourneyMap", "a.json", "Farm", -40, 70, 12)
+        assertEquals(listOf(Marker(MarkerKind.Waypoint, "Farm", -40, 70, 12, 0x00FF00, "JourneyMap", key)), MarkerReader.read(world))
+    }
+
+    @Test
+    fun `the key of a waypoint is the same wherever the mod folder is and differs per file`() {
+        val a = MarkerReader.xaeroLine("waypoint:Base:B:1:2:3:2:false:0:s", "one.txt")!!
+        val b = MarkerReader.xaeroLine("waypoint:Base:B:1:2:3:2:false:0:s", "two.txt")!!
+        assertEquals(a.key, MarkerReader.xaeroLine("waypoint:Base:B:1:2:3:2:false:0:s", "one.txt")!!.key)
+        assertEquals(false, a.key == b.key)
+        assertEquals(null, MarkerReader.banners(Files.createTempDirectory("none")).firstOrNull()?.key)
     }
 
     @Test
