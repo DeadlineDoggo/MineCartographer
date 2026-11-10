@@ -285,6 +285,10 @@ class EditorState {
         private set
     var exportDialogVisible by mutableStateOf(false)
 
+    /** The color picker window (opened from the View tab) and the color it shows. */
+    var colorPickerVisible by mutableStateOf(false)
+    var pickedColor by mutableIntStateOf(0x4C9AFF)
+
     /** The world whose Info window is open, from its right-click menu. */
     var worldInfo by mutableStateOf<WorldSource?>(null)
 

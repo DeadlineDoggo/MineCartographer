@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 
 /** Small line icons drawn in code, so the app needs no icon font or image assets. */
 fun interface EditorIcon {
@@ -92,6 +93,24 @@ object Icons {
         drawArc(color, startAngle = 140f, sweepAngle = 220f, useCenter = false,
             topLeft = Offset(size.width * 0.18f, size.height * 0.22f), size = Size(size.width * 0.64f, size.height * 0.64f), style = stroke())
         drawPath(poly(0.96f, 0.5f, 0.68f, 0.5f, 0.82f, 0.28f), color)
+    }
+
+    /** An eyedropper, leaning right: the rubber bulb top right, the collar, the glass tube and its tip bottom left. */
+    val Pipette = EditorIcon { color ->
+        val w = size.width
+        val h = size.height
+        val line = size.minDimension * 0.08f
+        rotate(45f, Offset(w / 2, h / 2)) {
+            // bulb
+            drawRoundRect(color, Offset(w * 0.39f, h * 0.0f), Size(w * 0.22f, h * 0.24f), androidx.compose.ui.geometry.CornerRadius(w * 0.11f))
+            // collar
+            drawRoundRect(color, Offset(w * 0.3f, h * 0.24f), Size(w * 0.4f, h * 0.08f), androidx.compose.ui.geometry.CornerRadius(w * 0.03f))
+            // tube, half full
+            drawRoundRect(color, Offset(w * 0.4f, h * 0.32f), Size(w * 0.2f, h * 0.46f), androidx.compose.ui.geometry.CornerRadius(w * 0.04f), style = Stroke(line))
+            drawRect(color, Offset(w * 0.4f, h * 0.56f), Size(w * 0.2f, h * 0.22f))
+            // tip
+            drawLine(color, Offset(w * 0.5f, h * 0.78f), Offset(w * 0.5f, h * 0.98f), strokeWidth = line * 1.2f, cap = StrokeCap.Round)
+        }
     }
 
     /** A circled "i". */

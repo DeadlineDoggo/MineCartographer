@@ -77,6 +77,7 @@ fun EditorShell(state: EditorState, onExit: () -> Unit) {
     }
     StartScreen(state)
     ExportDialog(state)
+    ColorPickerDialog(state)
     WorldInfoDialog(state)
     ModelPickerDialog(state)
     ModelExportDialog(state)
@@ -290,6 +291,7 @@ private fun viewMenu(state: EditorState, map: Boolean) =
                 if (atlasShown) state.closeAtlas() else state.openAtlas()
             })
             add(MenuItem("Mods & textures…", enabled = (state.activeWorld as? minecartographer.core.anvil.AnvilWorld)?.info?.forge != null) { state.modsPanelVisible = true })
+            add(MenuItem("Color picker…") { state.colorPickerVisible = true })
             add(MenuSeparator)
             if (map) {
                 add(MenuItem("Chunk borders", checked = s.chunkBorders) { state.updateRenderSettings(s.copy(chunkBorders = !s.chunkBorders)) })

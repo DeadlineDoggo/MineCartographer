@@ -1,5 +1,6 @@
 package minecartographer.core.markers
 
+import minecartographer.core.color.MinecraftColors
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -32,7 +33,7 @@ object WaypointWriters {
         append("#\n#waypoint:name:initials:x:y:z:color:disabled:type:set:rotate_on_tp:tp_yaw:visibility_type:destination\n#\n")
         for (m in waypoints(markers)) {
             val name = m.name.replace(":", "§§")
-            val color = nearestChatColor(m.rgb)
+            val color = MinecraftColors.nearestIndex(m.rgb)
             append("waypoint:$name:${initials(m.name)}:${m.x}:${m.y ?: "~"}:${m.z}:$color:false:0:gui.xaero_default:false:0:0:false\n")
         }
     }
@@ -43,16 +44,6 @@ object WaypointWriters {
         Files.createDirectories(file.parent)
         Files.writeString(file, xaeroText(markers))
         return file
-    }
-
-    private fun nearestChatColor(rgb: Int): Int =
-        MarkerReader.CHAT.indices.minBy { distance(MarkerReader.CHAT[it], rgb) }
-
-    private fun distance(a: Int, b: Int): Int {
-        val r = (a shr 16 and 255) - (b shr 16 and 255)
-        val g = (a shr 8 and 255) - (b shr 8 and 255)
-        val bl = (a and 255) - (b and 255)
-        return r * r + g * g + bl * bl
     }
 
     /** Xaero shows the first letter on the pin. */
