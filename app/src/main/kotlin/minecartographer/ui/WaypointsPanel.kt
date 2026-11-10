@@ -58,9 +58,11 @@ fun BoxScope.WaypointsDrawer(state: EditorState) {
     val banners = state.markers[world.id].orEmpty().filter { it.kind == MarkerKind.Banner }
     if (waypoints.isEmpty() && banners.isEmpty()) return
     if (!state.waypointsVisible) {
+        // The Mods & textures and Analyze panels cover the map's edge while they are open, tab and all.
+        if (state.modsPanelVisible || state.analyzeVisible) return
         // Under the tabs of Mods & textures and Analyze, when those are shown.
-        val above = (if (world is minecartographer.core.anvil.AnvilWorld && state.hasMods(world) && !state.analyzeVisible) 1 else 0) +
-            (if (state.analyzeRequest != null && !state.modsPanelVisible && !state.analyzeVisible) 1 else 0)
+        val above = (if (world is minecartographer.core.anvil.AnvilWorld && state.hasMods(world)) 1 else 0) +
+            (if (state.analyzeRequest != null) 1 else 0)
         val shape = RoundedCornerShape(topEnd = 6.dp, bottomEnd = 6.dp)
         Box(
             Modifier.align(Alignment.TopStart).padding(top = 52.dp + 44.dp * above).overMap(state).clip(shape)
