@@ -1,26 +1,34 @@
-# Builds the installers (each bundles its own Java runtime) and attaches them to a draft release.
-# Runs on a pushed tag like v0.4.1-alpha; publish the draft by hand after checking it.
+# Builds the installers (each bundles its own Java runtime) and attaches them to a release.
+# Runs on a pushed tag like v0.5.0-alpha. The "-alpha" suffix stays in the tag and is ignored for the logic:
+#   vX.Y.0[-alpha]  full release: a DRAFT (publish it by hand after reading the notes), marked Latest
+#   vX.Y.Z[-alpha]  (Z > 0) nightly: published at once as a pre-release
+# The tag must equal appVersion in gradle.properties. Notes come from the commit messages.
 name: Release
 
 on:
   push:
     tags: ["v*"]
-  workflow_dispatch: # manual run: builds the packages as workflow artifacts, no release
+  workflow_dispatch: # manual run: builds everything as workflow artifacts, no release
 
 permissions:
   contents: write
 
 jobs:
-  package:
+  build:
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            name: windows
-          # The oldest supported runner, so the bundled runtime runs on older glibc too.
-          - os: ubuntu-22.04
-            name: linux
+          # The oldest supported runners, so the bundled runtime runs on older glibc too.
+          - { name: linux-x64,   os: ubuntu-22.04,     kind: linux }
+          - { name: linux-arm64, os: ubuntu-22.04-arm, kind: linux }
+          - { name: macos-arm64, os: macos-latest,     kind: macos }
+          - { name: macos-x64,   os: macos-15-intel,   kind: macos }
+          - { name: windows,     os: windows-latest,   kind: windows }
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
 
@@ -33,7 +41,6 @@ jobs:
 
       - name: Check that the tag matches appVersion
         if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
         run: |
           version=$(grep '^appVersion=' gradle.properties | cut -d= -f2)
           if [ "v$version" != "$GITHUB_REF_NAME" ]; then
@@ -41,74 +48,90 @@ jobs:
             exit 1
           fi
 
-      - name: Build the MSI
-        if: matrix.name == 'windows'
-        run: ./gradlew :app:packageMsi
-
-      - name: Build the DEB and the portable archive
-        if: matrix.name == 'linux'
+      # The Linux archive also feeds the .deb/.rpm/Arch packages (job "packages").
+      - name: Build the portable Linux archive
+        if: matrix.kind == 'linux'
         run: |
-          sudo apt-get install -y fakeroot
-          ./gradlew :app:packageDeb :app:createDistributable
+          ./gradlew :app:createDistributable
           version=$(grep '^appVersion=' gradle.properties | cut -d= -f2)
-          tar -czf "app/build/compose/binaries/main/MineCartographer-$version-linux-x64.tar.gz" \
+          mkdir out
+          tar -czf "out/MineCartographer-$version-${{ matrix.name }}.tar.gz" \
             -C app/build/compose/binaries/main/app MineCartographer
+
+      - name: Build the DMG (unsigned)
+        if: matrix.kind == 'macos'
+        run: |
+          ./gradlew :app:packageDmg
+          version=$(grep '^appVersion=' gradle.properties | cut -d= -f2)
+          mkdir out
+          cp app/build/compose/binaries/main/dmg/*.dmg "out/MineCartographer-$version-${{ matrix.name }}.dmg"
+
+      - name: Build the MSI
+        if: matrix.kind == 'windows'
+        run: |
+          ./gradlew :app:packageMsi
+          mkdir out
+          cp app/build/compose/binaries/main/msi/*.msi out/
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.name }}
           if-no-files-found: error
-          path: |
-            app/build/compose/binaries/main/msi/*.msi
-            app/build/compose/binaries/main/deb/*.deb
-            app/build/compose/binaries/main/*.tar.gz
+          path: out/*
 
-  # Compose has no Arch format: this wraps the portable archive in a pacman package (packaging/arch/PKGBUILD).
-  arch:
-    needs: package
+  # One nfpm definition (packaging/nfpm.yaml) -> .deb, .rpm and Arch package, per CPU.
+  packages:
+    needs: build
     runs-on: ubuntu-latest
-    container: archlinux:base-devel
+    strategy:
+      matrix:
+        include:
+          - { name: linux-x64,   arch: amd64 }
+          - { name: linux-arm64, arch: arm64 }
     steps:
-      - run: pacman -Syu --noconfirm git
-
       - uses: actions/checkout@v7
 
       - uses: actions/download-artifact@v8
         with:
-          name: linux
-          path: dist
+          name: ${{ matrix.name }}
+          path: in
 
-      - name: Build the package
+      - name: Build the packages
         run: |
           version=$(grep '^appVersion=' gradle.properties | cut -d= -f2)
-          cp dist/*.tar.gz packaging/arch/
-          cp app/icons/app.png LICENSE packaging/arch/
-          # makepkg refuses to run as root.
-          useradd -m builder
-          chown -R builder packaging/arch
-          cd packaging/arch
-          su builder -c "MC_VERSION=$version makepkg -f --nodeps"
+          sh packaging/build-packages.sh "$version" ${{ matrix.arch }} in/*.tar.gz dist
 
       - uses: actions/upload-artifact@v7
         with:
-          name: arch
+          name: packages-${{ matrix.arch }}
           if-no-files-found: error
-          path: packaging/arch/*.pkg.tar.zst
+          path: dist/*
 
   release:
-    needs: [package, arch]
+    needs: [build, packages]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the notes need the full history and the tags
+
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
-      - name: Create a draft release
+      - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # The artifacts keep their msi/ and deb/ subfolders.
-          gh release create "$GITHUB_REF_NAME" $(find dist -type f) \
-            --repo "$GITHUB_REPOSITORY" --draft --prerelease --title "$GITHUB_REF_NAME" --generate-notes
+          (cd dist && sha256sum * > SHA256SUMS)
+          sh .github/scripts/release-notes.sh "$GITHUB_REF_NAME" > RELEASE_NOTES.md
+          # Full release = X.Y.0 (any -alpha suffix is ignored), otherwise a nightly.
+          base=${GITHUB_REF_NAME#v}; base=${base%%-*}
+          case "$base" in
+            *.*.0) flags="--draft --latest" ;;
+            *)     flags="--prerelease" ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md $flags

@@ -1,0 +1,71 @@
+# One definition for the .deb, .rpm and Arch packages (nfpm). Wraps the portable Linux build.
+# Run through packaging/build-packages.sh, which stages the files under build/pkgroot first
+# (nfpm does not expand variables in `src`, hence the fixed paths).
+name: minecartographer
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+section: utils
+priority: optional
+maintainer: Emanuel Cisar <emanuelcisar@gmail.com>
+description: |
+  Map and chunk editor for Minecraft worlds, with 3D views and a model editor.
+  Brings its own Java runtime.
+vendor: Emanuel Cisar
+homepage: https://github.com/DeadlineDoggo/MineCartographer
+license: GPL-3.0-or-later
+
+contents:
+  - src: build/pkgroot/opt/minecartographer
+    dst: /opt/minecartographer
+    type: tree
+    file_info:
+      owner: root
+      group: root
+  - src: /opt/minecartographer/bin/MineCartographer
+    dst: /usr/bin/minecartographer
+    type: symlink
+  - src: build/pkgroot/minecartographer.desktop
+    dst: /usr/share/applications/minecartographer.desktop
+    file_info:
+      mode: 0644
+  - src: build/pkgroot/minecartographer.png
+    dst: /usr/share/icons/hicolor/512x512/apps/minecartographer.png
+    file_info:
+      mode: 0644
+  - src: build/pkgroot/LICENSE
+    dst: /usr/share/licenses/minecartographer/LICENSE
+    file_info:
+      mode: 0644
+
+# The bundled Java runtime needs only these system libraries.
+depends:
+  - libfontconfig1
+  - libfreetype6
+  - libasound2 | libasound2t64
+  - libxrender1
+  - libxtst6
+  - libxi6
+recommends:
+  - zenity | kdialog
+
+overrides:
+  rpm:
+    depends:
+      - fontconfig
+      - freetype
+      - alsa-lib
+      - libXrender
+      - libXtst
+      - libXi
+    recommends: []
+  archlinux:
+    depends:
+      - glibc
+      - fontconfig
+      - freetype2
+      - alsa-lib
+      - libxrender
+      - libxtst
+      - libxi
+    recommends: []

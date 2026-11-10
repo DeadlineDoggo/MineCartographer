@@ -187,12 +187,17 @@ page. Each one brings its own Java runtime, so you don't need Java installed, an
 have doesn't matter.
 
 - **Windows:** run `MineCartographer-x.y.z.msi`. A newer installer replaces the installed version.
-- **Debian, Ubuntu, Mint:** `sudo apt install ./minecartographer_x.y.z_amd64.deb`. The app goes to
-  `/opt/minecartographer` and appears in the applications menu.
-- **Other Linux:** unpack `MineCartographer-x.y.z-linux-x64.tar.gz` anywhere and run
-  `MineCartographer/bin/MineCartographer`.
+- **macOS:** open `MineCartographer-x.y.z-alpha-macos-arm64.dmg` (Apple silicon) or `-macos-x64.dmg`
+  (Intel) and drag the app to Applications. The app is not signed, so the first time right-click it
+  and choose Open.
+- **Debian, Ubuntu, Mint:** `sudo apt install ./minecartographer_*_amd64.deb` (`arm64` on ARM). The app
+  goes to `/opt/minecartographer` and appears in the applications menu.
+- **Fedora, openSUSE:** `sudo dnf install ./minecartographer-*.x86_64.rpm` (`aarch64` on ARM).
+- **Arch:** `sudo pacman -U minecartographer-*-x86_64.pkg.tar.zst` (`aarch64` on ARM).
+- **Other Linux:** unpack `MineCartographer-x.y.z-linux-x64.tar.gz` (or `-linux-arm64`) anywhere and
+  run `MineCartographer/bin/MineCartographer`.
 
-macOS users build from source for now (see below).
+Every release also has a `SHA256SUMS` file.
 
 Open and save dialogs are the ones of your system: the Explorer dialog on Windows (hidden folders
 like `.minecraft` shown), the KDE or GNOME dialog on Linux (through `kdialog`, or `zenity` and the
@@ -220,8 +225,9 @@ To build an installer for your platform (MSI on Windows, DMG on macOS, DEB on Li
 ```
 
 The installer ends up in `app/build/compose/binaries/`. Each platform builds only its own package
-(the DEB needs `fakeroot`). Pushing a tag like `v0.4.1-alpha` builds the Windows and Linux packages
-on GitHub Actions and attaches them to a draft release.
+(the DEB needs `fakeroot`). Pushing a tag builds all the packages on GitHub Actions: `v0.5.0-alpha`
+(last number 0) is a full release, created as a draft for review; `v0.5.1-alpha` is a nightly,
+published at once as a pre-release. The tag must equal `appVersion` in `gradle.properties`.
 
 ## Using it
 

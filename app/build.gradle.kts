@@ -59,6 +59,11 @@ compose.desktop {
                 // Never change it: a new MSI with the same id replaces the installed version instead of adding a second one.
                 upgradeUuid = "228eb82e-9a99-43fb-9610-bc6f23dcc2c6"
             }
+            macOS {
+                // jpackage refuses a major version of 0 on macOS, so 0.4.0 becomes 1.4.0 inside the DMG.
+                val numeric = appVersion.substringBefore('-')
+                packageVersion = if (numeric.startsWith("0.")) "1." + numeric.removePrefix("0.") else numeric
+            }
             linux {
                 iconFile = layout.projectDirectory.file("icons/app.png")
                 shortcut = true // .desktop entry in the applications menu
