@@ -126,12 +126,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           (cd dist && sha256sum * > SHA256SUMS)
-          sh .github/scripts/release-notes.sh "$GITHUB_REF_NAME" > RELEASE_NOTES.md
+          DIST=dist sh .github/scripts/release-notes.sh "$GITHUB_REF_NAME" > RELEASE_NOTES.md
+          cat RELEASE_NOTES.md
           # Full release = X.Y.0 (any -alpha suffix is ignored), otherwise a nightly.
           base=${GITHUB_REF_NAME#v}; base=${base%%-*}
           case "$base" in
-            *.*.0) flags="--draft --latest" ;;
-            *)     flags="--prerelease" ;;
+            *.*.0) flags="--draft --latest";  title="MineCartographer ${GITHUB_REF_NAME#v}" ;;
+            *)     flags="--prerelease";      title="MineCartographer ${GITHUB_REF_NAME#v} (nightly)" ;;
           esac
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
-            --title "$GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md $flags
+            --title "$title" --notes-file RELEASE_NOTES.md $flags
