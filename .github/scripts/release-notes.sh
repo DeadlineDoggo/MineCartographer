@@ -37,22 +37,23 @@ subjects=$(git log --no-merges --format=%s "$range" \
   | grep -v '^chore: release v' || true)
 
 # One section (### title) of the commits whose type matches the regex. Commits without a scope come first, together
-# with scopes used only once ("- **scope:** text"); a scope used two or more times gets its own "#### Scope:" group
-# below them, in the order the scopes first appear.
+# with scopes used only once ("- **Scope:** text"); a scope used two or more times becomes one bullet in bold with its
+# commits as a nested list under it, in the order the scopes first appear.
 section() { # title, type regex
   out=$(printf '%s\n' "$subjects" | sed -n -E "s/^($2)(\(([^)]*)\))?!?: (.+)\$/\3\t\4/p" | awk -F'\t' '
+    function cap(x) { return toupper(substr(x, 1, 1)) substr(x, 2) }
     { scope[NR] = $1; text[NR] = $2; if ($1 != "") n[$1]++ }
     END {
       for (i = 1; i <= NR; i++) {
         if (scope[i] == "") print "- " text[i]
-        else if (n[scope[i]] == 1) print "- **" scope[i] ":** " text[i]
+        else if (n[scope[i]] == 1) print "- **" cap(scope[i]) ":** " text[i]
       }
       for (i = 1; i <= NR; i++) {
         s = scope[i]
         if (s == "" || n[s] < 2 || done[s]) continue
         done[s] = 1
-        printf "\n#### %s:\n", toupper(substr(s, 1, 1)) substr(s, 2)
-        for (j = i; j <= NR; j++) if (scope[j] == s) print "- " text[j]
+        print "- **" cap(s) "**"
+        for (j = i; j <= NR; j++) if (scope[j] == s) print "  - " text[j]
       }
     }')
   [ -n "$out" ] && printf '### %s\n%s\n\n' "$1" "$out"
