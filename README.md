@@ -36,7 +36,8 @@ new world. Your original saves are only read, never modified.
   chunks, and they can be restored.
 - **Projects** save the whole workspace (open worlds, layers, selection, camera and settings) to
   a small XML file you can open again later.
-- **Export** writes a new world folder. Untouched chunks are copied byte for byte.
+- **Export** writes a folder of its own: the new world, a README that says where to copy it and for which
+  Minecraft version, and the list of where its chunks came from. Untouched chunks are copied byte for byte.
 
 ## Render modes
 
@@ -258,7 +259,17 @@ published at once as a pre-release. The tag must equal `appVersion` in `gradle.p
 2. Select chunks with the brush (B) or rectangle (R) tool and copy them (Ctrl+C).
 3. Open the target world and paste (Ctrl+V). The chunks follow the cursor until you click, and
    become a new layer.
-4. Arrange the layers, then **File → Export merged world…** (Ctrl+Shift+S).
+4. Arrange the layers, then **File → Export merged world…** (Ctrl+Shift+S). Choose the world's name and a
+   folder; the export goes into a new folder there, `<name>_Export` (numbered when it exists already):
+
+   ```
+   <name>_Export/
+   ├── README.md                     where to copy what, for which Minecraft version (and mods)
+   ├── minecartographer-sources.xml  where the chunks came from
+   └── <name>/                       the world: copy it into your game's saves folder
+   ```
+
+   Export waits while waypoints have unresolved issues (see *Waypoints*).
 
 ### Projects
 
@@ -269,7 +280,7 @@ mode, the dock layout and the open model tabs with their models. **File → Open
 
 For each world the project also remembers the client jar its textures came from (the "core"
 textures), even when they were found automatically, so the world looks the same the next time.
-An export writes `minecartographer-sources.xml` into the new world folder. It lists every world
+An export writes `minecartographer-sources.xml` next to the new world, in its export folder. It lists every world
 that chunks came from, how many, and their textures, so you can later see which textures and
 resource packs the merged world needs. Minecraft ignores the file. The title bar shows `*` when there are unsaved changes, and the editor asks
 before closing them.
