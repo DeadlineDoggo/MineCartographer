@@ -38,9 +38,9 @@ object WaypointWriters {
         }
     }
 
-    /** Writes `<root>/<worldFolder>/dim%0/waypoints.txt`; [root] is the `xaero/minimap` folder. Returns the file. */
+    /** Writes `<root>/<world folder as Xaero names it>/dim%0/waypoints.txt`; [root] is the `xaero/minimap` folder. Returns the file. */
     fun writeXaero(root: Path, worldFolder: String, markers: List<Marker>): Path {
-        val file = root.resolve(worldFolder).resolve("dim%0").resolve("waypoints.txt")
+        val file = root.resolve(MarkerReader.xaeroFolder(worldFolder)).resolve("dim%0").resolve("waypoints.txt")
         Files.createDirectories(file.parent)
         Files.writeString(file, xaeroText(markers))
         return file

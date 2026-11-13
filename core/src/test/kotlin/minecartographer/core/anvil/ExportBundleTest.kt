@@ -28,4 +28,29 @@ class ExportBundleTest {
         assertTrue("Copy the folder `Merged` into the `saves` folder" in text)
         assertTrue("## Waypoints\n\nCopy `xaero` too." in text)
     }
+
+    @Test
+    fun `waypoints go where the mods read them, and the readme lists them`() {
+        val bundle = Files.createTempDirectory("bundle")
+        val key = minecartographer.core.markers.WaypointKey("JourneyMap", "a.json", "Home", 1, 64, 2)
+        val home = minecartographer.core.markers.Marker(minecartographer.core.markers.MarkerKind.Waypoint, "Home", 1, 64, 2, 0x55FF55, "JourneyMap", key)
+        val section = ExportBundle.writeWaypoints(bundle, "My_World", listOf(home to minecartographer.core.markers.WaypointOrigin.Mod),
+            ExportBundle.WaypointFormats(xaero = true, journeyMap = true), "9.9")
+        assertTrue(Files.exists(bundle.resolve("waypoints.json")))
+        assertTrue(Files.exists(bundle.resolve("xaero/minimap/My%us%World/dim%0/waypoints.txt")), "Xaero writes _ as %us%")
+        assertTrue(Files.exists(bundle.resolve("journeymap/data/sp/My_World/waypoints/Home_1-64-2.json")))
+        // The bundle's folders are laid out like a game folder: the readers find the waypoints there.
+        val world = bundle.resolve("saves/My_World").also { it.createDirectories() }
+        assertEquals(2, minecartographer.core.markers.MarkerReader.read(world).size)
+        val readme = ExportBundle.readme("My World", "My_World", DemoWorld("Valley", seed = 1), "9.9", listOf(section))
+        assertTrue("| `xaero/` |" in readme && "| `journeymap/` |" in readme && "## Waypoints" in readme)
+    }
+
+    @Test
+    fun `only the chosen mods get files`() {
+        val bundle = Files.createTempDirectory("bundle")
+        ExportBundle.writeWaypoints(bundle, "W", emptyList(), ExportBundle.WaypointFormats(xaero = false, journeyMap = true), "1")
+        assertTrue(Files.exists(bundle.resolve("waypoints.json")))
+        assertTrue(!Files.exists(bundle.resolve("xaero")))
+    }
 }

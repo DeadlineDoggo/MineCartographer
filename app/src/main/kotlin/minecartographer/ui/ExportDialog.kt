@@ -67,6 +67,7 @@ fun ExportDialog(state: EditorState) {
         val notes = buildList {
             add("The original saves are only read, never changed.")
             add("The export is a folder of its own: the world, a README that says where to copy it, and minecartographer-sources.xml. Copy the world folder inside it into your game's saves folder.")
+            add("Waypoints go into xaero/ and journeymap/ folders laid out like the game folder: copy them into the folder that holds saves. The mods find them by the world's folder name.")
             if (older.isNotEmpty()) add("Chunks from ${older.joinToString { it.versionLabel }} keep their own version. Minecraft ${base.versionLabel} upgrades them the first time the merged world is opened.")
             addAll(minecartographer.core.anvil.WorldExporter.notes(stack))
             if (erased > 0) add("Erased chunks are left out, so Minecraft generates fresh terrain there when you visit.")
@@ -74,6 +75,11 @@ fun ExportDialog(state: EditorState) {
             add("Only the overworld is merged; the Nether, the End, player data and maps come from \"${base.name}\".")
         }
         var infoOpen by remember { mutableStateOf(false) }
+        // Waypoints: the active world's, as shown (changes applied, own ones included).
+        val waypointCount = state.shownWaypoints(base).size
+        var withWaypoints by remember { mutableStateOf(true) }
+        var xaero by remember { mutableStateOf(true) }
+        var journeyMap by remember { mutableStateOf(true) }
         val folder = ExportBundle.folderName(name)
 
         Box(Modifier.fillMaxSize().background(EditorTheme.window)) {
@@ -107,6 +113,16 @@ fun ExportDialog(state: EditorState) {
                     }
                     if (erased > 0) KeyValue("Erased chunks", "$erased")
 
+                    if (waypointCount > 0) {
+                        SectionHeader("WAYPOINTS")
+                        Checkbox("Export the $waypointCount waypoints for minimap mods", withWaypoints) { withWaypoints = it }
+                        if (withWaypoints) Column(Modifier.padding(start = 24.dp)) {
+                            Checkbox("Xaero's Minimap (16 colors)", xaero) { xaero = it }
+                            Checkbox("JourneyMap", journeyMap) { journeyMap = it }
+                            Txt("Plus waypoints.json with all of them. The README says where they go.", color = EditorTheme.textFaint, size = 11.sp, maxLines = 2)
+                        }
+                    }
+
                     if (problems.isNotEmpty()) {
                         SectionHeader("CAN'T EXPORT")
                         problems.forEach { Txt("• $it", Modifier.padding(vertical = 2.dp), color = EditorTheme.deleted, size = 12.sp, maxLines = 4) }
@@ -125,7 +141,10 @@ fun ExportDialog(state: EditorState) {
                     TextButton(
                         "Export", primary = true,
                         enabled = problems.isEmpty() && name.isNotBlank() && !state.busy,
-                    ) { state.exportActive(parent, name.trim()) }
+                    ) {
+                        val formats = if (waypointCount > 0 && withWaypoints) ExportBundle.WaypointFormats(xaero, journeyMap) else null
+                        state.exportActive(parent, name.trim(), formats)
+                    }
                 }
             }
 

@@ -505,8 +505,10 @@ class EditorState {
      * Writes the active world's visible layers into a new bundle folder in [parent] (see [ExportBundle]): the world as
      * [levelName], the sources file and a README.
      */
-    fun exportActive(parent: Path, levelName: String) {
+    fun exportActive(parent: Path, levelName: String, waypointFormats: ExportBundle.WaypointFormats? = null) {
         val stack = activeStack ?: return
+        // The waypoints as shown (the mods' with the project's changes, and the project's own), taken now on this thread.
+        val waypoints = if (waypointFormats == null) emptyList() else shownWaypoints(stack.world).map { it.marker to it.origin }
         if (busy) return notify("Wait for the current task to finish", warning = true)
         busy = true
         exportDialogVisible = false
@@ -527,7 +529,10 @@ class EditorState {
                     }
                 }
                 ProjectFile.writeSources(bundle, stack, textures, AppInfo.version)
-                ExportBundle.writeReadme(bundle, ExportBundle.readme(levelName, worldFolder, stack.world, AppInfo.version))
+                val sections = listOfNotNull(
+                    waypointFormats?.takeIf { waypoints.isNotEmpty() }?.let { ExportBundle.writeWaypoints(bundle, worldFolder, waypoints, it, AppInfo.version) },
+                )
+                ExportBundle.writeReadme(bundle, ExportBundle.readme(levelName, worldFolder, stack.world, AppInfo.version, sections))
                 Triple(report, bundle, output)
             }
             withContext(Dispatchers.Main) {

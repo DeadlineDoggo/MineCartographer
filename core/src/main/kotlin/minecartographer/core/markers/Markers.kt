@@ -114,8 +114,8 @@ object MarkerReader {
     /** Files `waypoint:name:initials:x:y:z:color:disabled:type:set...` of the overworld folder `dim%0`; `~` for a height means none. */
     fun xaero(game: Path, worldFolder: String): List<Marker> {
         val result = ArrayList<Marker>()
-        for (root in listOf("XaeroWaypoints", "xaero/minimap")) {
-            val dir = game.resolve(root).resolve(worldFolder).resolve("dim%0")
+        for (root in listOf("XaeroWaypoints", "xaero/minimap")) for (folder in listOf(xaeroFolder(worldFolder), worldFolder).distinct()) {
+            val dir = game.resolve(root).resolve(folder).resolve("dim%0")
             if (!dir.isDirectory()) continue
             for (file in dir.listDirectoryEntries("*.txt").sortedBy { it.name }) {
                 for (line in Files.readAllLines(file)) result += xaeroLine(line, file.name) ?: continue
@@ -123,6 +123,9 @@ object MarkerReader {
         }
         return result.distinct()
     }
+
+    /** The folder Xaero's Minimap keeps a singleplayer world's waypoints in: the save's folder name with `_` written as `%us%`. */
+    fun xaeroFolder(worldFolder: String) = worldFolder.replace("_", "%us%")
 
     internal fun xaeroLine(line: String, file: String = ""): Marker? {
         if (!line.startsWith("waypoint:")) return null

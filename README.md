@@ -266,7 +266,10 @@ published at once as a pre-release. The tag must equal `appVersion` in `gradle.p
    <name>_Export/
    ├── README.md                     where to copy what, for which Minecraft version (and mods)
    ├── minecartographer-sources.xml  where the chunks came from
-   └── <name>/                       the world: copy it into your game's saves folder
+   ├── <name>/                       the world: copy it into your game's saves folder
+   ├── waypoints.json                with "Export waypoints": all the world's waypoints
+   ├── xaero/                        Xaero's Minimap's waypoints   } copy into the game folder,
+   └── journeymap/                   JourneyMap's waypoints        } the one that holds saves
    ```
 
    Export waits while waypoints have unresolved issues (see *Waypoints*).
