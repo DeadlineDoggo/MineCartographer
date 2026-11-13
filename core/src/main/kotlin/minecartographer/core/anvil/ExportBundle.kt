@@ -30,9 +30,9 @@ object ExportBundle {
     fun folderName(levelName: String): String =
         levelName.trim().replace(Regex("""[<>:"/\\|?*\u0000-\u001F]"""), "_").trimEnd('.', ' ').ifEmpty { "Merged world" }
 
-    /** The bundle folder for [levelName] in [parent]: `<name>_Export`, or `<name>_Export (1)`, `(2)`... when taken. */
-    fun folderFor(parent: Path, levelName: String): Path {
-        val base = folderName(levelName) + "_Export"
+    /** The bundle folder for [levelName] in [parent]: `<name>_Export` (or another [suffix]), then `(1)`, `(2)`... when taken. */
+    fun folderFor(parent: Path, levelName: String, suffix: String = "_Export"): Path {
+        val base = folderName(levelName) + suffix
         var candidate = parent.resolve(base)
         var n = 1
         while (candidate.exists()) candidate = parent.resolve("$base (${n++})")
@@ -108,6 +108,20 @@ object ExportBundle {
         for (section in extra) append("## ${section.title}\n\n${section.markdown.trimEnd()}\n\n")
 
         append("---\n\nMineCartographer is an alpha: keep a backup of anything you care about, and check the world in Minecraft before relying on it.\n")
+    }
+
+    /**
+     * The README of a waypoints-only export: the waypoints of the world [base], whose save folder is [worldFolder] (the
+     * mods find them by that name), and where they go.
+     */
+    fun waypointsReadme(worldFolder: String, base: WorldSource, appVersion: String, section: Section): String = buildString {
+        append("# Waypoints of ${base.name}\n\n")
+        append("Exported with MineCartographer $appVersion on ${LocalDate.now()}, for the world in the save folder `$worldFolder` ")
+        append("(Minecraft: Java Edition ${base.versionLabel}). Only the waypoints, not the world.\n\n")
+        append("## What is in here\n\n| | |\n|---|---|\n")
+        for ((file, what) in section.files) append("| `$file` | $what |\n")
+        append("| `$README` | this file |\n\n")
+        append("## ${section.title}\n\n${section.markdown.trimEnd()}\n")
     }
 
     fun writeReadme(bundle: Path, text: String) {

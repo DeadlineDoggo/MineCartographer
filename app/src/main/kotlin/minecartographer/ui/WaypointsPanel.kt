@@ -165,6 +165,13 @@ private fun WaypointsPanel(
                     icon = Icons.Plus, primary = !state.placingWaypoint,
                 ) { state.placingWaypoint = !state.placingWaypoint }
             }
+            Spacer(Modifier.height(6.dp))
+            WithTooltip("Only the waypoints, for Xaero's Minimap and JourneyMap, into a folder you choose") {
+                TextButton("Export waypoints…", Modifier.fillMaxWidth(), icon = Icons.Folder, enabled = waypoints.isNotEmpty()) {
+                    val start = state.lastExportParent ?: java.nio.file.Path.of(System.getProperty("user.home"))
+                    FileDialogs.chooseFolder("Choose where to create the waypoints folder", start)?.let { state.exportWaypoints(world, it) }
+                }
+            }
         }
     }
 }

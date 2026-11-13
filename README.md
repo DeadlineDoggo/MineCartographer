@@ -147,7 +147,10 @@ another color: the 16 Minecraft colors for Xaero's waypoints (all it supports), 
 also picked from anywhere on the screen. Deleting a mod's waypoint only hides it in the project; it waits
 under *Deleted* to be restored. Right-click a pin for the same: go to it or copy its coordinates.
 
-Everything you change is saved in the project. The mods' own files are only read, never written.
+Everything you change is saved in the project. The mods' own files are only read, never written. To use the
+waypoints in the game, export them: with the world (see *Using it*), or alone with **Export waypoints…** at the bottom of
+the list, which writes a `<world>_Waypoints` folder with `xaero/`, `journeymap/`, `waypoints.json` and a README that says
+where they go.
 
 ![The waypoints list next to the map, placing a new one](docs/waypoints.png)
 

@@ -53,4 +53,13 @@ class ExportBundleTest {
         assertTrue(Files.exists(bundle.resolve("waypoints.json")))
         assertTrue(!Files.exists(bundle.resolve("xaero")))
     }
+
+    @Test
+    fun `a waypoints-only export has its own name and readme`() {
+        val dir = Files.createTempDirectory("bundle")
+        assertEquals(dir.resolve("World_Waypoints"), ExportBundle.folderFor(dir, "World", "_Waypoints"))
+        val section = ExportBundle.writeWaypoints(dir, "World", emptyList(), ExportBundle.WaypointFormats(xaero = true, journeyMap = false), "9.9")
+        val readme = ExportBundle.waypointsReadme("World", DemoWorld("Valley", seed = 1), "9.9", section)
+        assertTrue("# Waypoints of Valley" in readme && "| `xaero/` |" in readme && "Only the waypoints" in readme)
+    }
 }

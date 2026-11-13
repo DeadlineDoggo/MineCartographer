@@ -550,6 +550,35 @@ class EditorState {
         }
     }
 
+    /**
+     * Writes only the waypoints of [world] (as shown) for both minimap mods into a new `<world>_Waypoints` folder in
+     * [parent], with `waypoints.json` and a README. Waits while the world has unresolved issues.
+     */
+    fun exportWaypoints(world: WorldSource, parent: Path) {
+        if ((waypointOverlays[world.id]?.issueCount ?: 0) > 0) {
+            showIssues()
+            return notify("Resolve the waypoint issues first", warning = true)
+        }
+        val waypoints = shownWaypoints(world).map { it.marker to it.origin }
+        if (waypoints.isEmpty()) return notify("This world has no waypoints to export", warning = true)
+        // The mods find waypoints by the save's folder name, so that is the name to use (not the level name).
+        val worldFolder = (world as? AnvilWorld)?.folder?.fileName?.toString() ?: ExportBundle.folderName(world.name)
+        lastExportParent = parent
+        scope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val bundle = ExportBundle.folderFor(parent, worldFolder, "_Waypoints")
+                Files.createDirectories(bundle)
+                val section = ExportBundle.writeWaypoints(bundle, worldFolder, waypoints, ExportBundle.WaypointFormats(xaero = true, journeyMap = true), AppInfo.version)
+                ExportBundle.writeReadme(bundle, ExportBundle.waypointsReadme(worldFolder, world, AppInfo.version, section))
+                bundle
+            }
+            withContext(Dispatchers.Main) {
+                result.onSuccess { notify("Exported ${waypoints.size} waypoints to $it") }
+                    .onFailure { notify("Could not export the waypoints: ${it.message}", warning = true) }
+            }
+        }
+    }
+
     fun updateRenderSettings(settings: RenderSettings) {
         val enteringTextured = settings.mode == RenderMode.Textured && renderSettings.mode != RenderMode.Textured
         renderSettings = settings
