@@ -24,6 +24,9 @@ new world. Your original saves are only read, never modified.
   turn and raise, select, export.
 - **Analyze a selection or a layer:** every block in it, how many, which are modded, and what each
   one becomes in the world it goes into.
+- **Waypoints** of Xaero's Minimap and JourneyMap, and banners on maps, as pins on the map. List them,
+  jump to them, copy their coordinates, add your own by clicking on the map, and rename, move, recolor
+  or hide them. Changes are kept in the project; the mods' files are never changed.
 - **Texture atlas:** every texture of your mods and packs on one page, with export to PNG.
 - **Model editor:** open any block model of your mods and packs, change its elements, faces and
   textures in a 3D view, and export it as a resource pack.
@@ -127,6 +130,25 @@ of *Mods & textures*, to save it as a PNG (as the pack has it, or enlarged with 
 its name, or export everything shown into a folder laid out like a resource pack.
 
 ![The texture atlas](docs/texture-atlas.png)
+
+## Waypoints
+
+The waypoints of **Xaero's Minimap** and **JourneyMap** show as pins on the map, together with the
+**banners marked on maps** in the world. The minimap mods keep their waypoints in the game folder, next to
+`saves`, so they are found when the world is opened from there. The *Waypoints* and *Map banners*
+checkboxes in the View tab of the side panel show or hide them.
+
+The **▸ Waypoints** tab on the map's left edge opens a list of them: click one to move the map to it, or
+open it with the arrow at its end to see and copy its position, a `/tp` command, its name and color, and
+which file it comes from. **New waypoint** at the bottom of the list, then a click on the map, puts one on
+the block you clicked, with its height. Open waypoints can be renamed, moved by typing coordinates and given
+another color: the 16 Minecraft colors for Xaero's waypoints (all it supports), any color for the others,
+also picked from anywhere on the screen. Deleting a mod's waypoint only hides it in the project; it waits
+under *Deleted* to be restored. Right-click a pin for the same: go to it or copy its coordinates.
+
+Everything you change is saved in the project. The mods' own files are only read, never written.
+
+![The waypoints list next to the map, placing a new one](docs/waypoints.png)
 
 ## Model editor
 
@@ -290,7 +312,7 @@ The file is plain XML, so you can read it or keep it in version control:
 | Keys | Action |
 |---|---|
 | WASD / arrows, middle drag | Move the view |
-| Right click | Menu for the selection, a chunk or a layer |
+| Right click | Menu for the selection, a chunk, a layer or a waypoint pin |
 | Mouse wheel, `+` / `-` | Zoom |
 | `,` / `.` | Rotate the view |
 | F | Fit the world on screen |
@@ -312,6 +334,7 @@ The file is plain XML, so you can read it or keep it in version control:
 | Ctrl+N, Ctrl+Shift+O | New project, open project |
 | Ctrl+S, Ctrl+Alt+S | Save project, save project as |
 | Ctrl+O, Ctrl+Shift+S | Open world, export |
+| Esc | Cancel placing a waypoint or pasting, else clear the selection |
 
 ## Project layout
 
