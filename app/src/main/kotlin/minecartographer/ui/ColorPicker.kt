@@ -323,6 +323,15 @@ private fun RingField(hsv: Hsv, onHsv: (Hsv) -> Unit, triangle: Boolean) {
     val latestOnHsv by rememberUpdatedState(onHsv)
     val sidePx = with(androidx.compose.ui.platform.LocalDensity.current) { RING_SIZE.dp.toPx() }
     val triangleImage = remember(triangle, hsv.h.roundToInt() % 360, sidePx) { if (triangle) renderTriangle(RingGeometry(sidePx, true), hsv.h.roundToInt() % 360) else null }
+    // The triangle's pure-hue corner points at the hue's spot on the ring. The angle follows the hue by the short way
+    // round (359° to 1° is 2°, not 358°) and eases there, so a click far along the ring turns the triangle smoothly.
+    // Only the angle is animated: the image is drawn turned, and picking uses the corners where they are drawn.
+    val unwrapped = remember { floatArrayOf(hsv.h) }
+    unwrapped[0] += ((hsv.h - unwrapped[0]) % 360f + 540f) % 360f - 180f
+    val turn by androidx.compose.animation.core.animateFloatAsState(
+        if (triangle) unwrapped[0] - 90f else 0f, androidx.compose.animation.core.tween(180, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+    )
+    val latestTurn by rememberUpdatedState(turn)
     Canvas(
         Modifier.size(RING_SIZE.dp).pointerInput(triangle) {
             awaitPointerEventScope {
@@ -333,7 +342,7 @@ private fun RingField(hsv: Hsv, onHsv: (Hsv) -> Unit, triangle: Boolean) {
                         grab = Grab.None
                         continue
                     }
-                    val geometry = RingGeometry(size.width.toFloat(), triangle)
+                    val geometry = RingGeometry(size.width.toFloat(), triangle, latestTurn)
                     if (event.type == PointerEventType.Press) grab = geometry.grabAt(change.position)
                     if (event.type != PointerEventType.Press && event.type != PointerEventType.Move) continue
                     when (grab) {
@@ -346,7 +355,7 @@ private fun RingField(hsv: Hsv, onHsv: (Hsv) -> Unit, triangle: Boolean) {
             }
         },
     ) {
-        val g = RingGeometry(size.width, triangle)
+        val g = RingGeometry(size.width, triangle, turn)
         // The ring: hue grows counterclockwise from the right, like in the pickers it follows.
         drawCircle(
             Brush.sweepGradient(listOf(0f, 300f, 240f, 180f, 120f, 60f, 0f).map { rgbColor(Hsv(it, 1f, 1f).toRgb()) }, g.center),
@@ -357,7 +366,7 @@ private fun RingField(hsv: Hsv, onHsv: (Hsv) -> Unit, triangle: Boolean) {
         drawCircle(Color.White, 9f, ringThumb, style = Stroke(2f))
         val hue = rgbColor(Hsv(hsv.h, 1f, 1f).toRgb())
         if (triangle) {
-            triangleImage?.let { drawImage(it) }
+            triangleImage?.let { image -> withTransform({ rotate(-turn, g.center) }) { drawImage(image) } }
         } else {
             val box = g.box
             drawRect(Brush.horizontalGradient(listOf(Color.White, hue), box.left, box.right), box.topLeft, box.size)
@@ -368,19 +377,21 @@ private fun RingField(hsv: Hsv, onHsv: (Hsv) -> Unit, triangle: Boolean) {
 }
 
 /** Where things are in a ring field [side] pixels wide. */
-private class RingGeometry(side: Float, val triangle: Boolean) {
+private class RingGeometry(side: Float, val triangle: Boolean, turn: Float = 0f) {
     val center = Offset(side / 2, side / 2)
     val outer = side / 2 - 2f
     val inner = outer * (1 - RING_THICKNESS)
     /** The inside of the ring that the square or triangle fills. */
     val reach = inner * 0.92f
 
-    /** Triangle corners: pure hue on top, white bottom right, black bottom left. */
-    val corners: List<Offset> = listOf(
-        Offset(center.x, center.y - reach),
-        Offset(center.x + reach * 0.866f, center.y + reach * 0.5f),
-        Offset(center.x - reach * 0.866f, center.y + reach * 0.5f),
-    )
+    /**
+     * Triangle corners: the pure hue, white and black. At [turn] 0 the pure hue is on top, white bottom right, black
+     * bottom left; [turn] is how far the whole triangle is turned counterclockwise, in degrees.
+     */
+    val corners: List<Offset> = listOf(90f, -30f, 210f).map { base ->
+        val a = Math.toRadians((base + turn).toDouble())
+        Offset(center.x + reach * kotlin.math.cos(a).toFloat(), center.y - reach * kotlin.math.sin(a).toFloat())
+    }
     val box: androidx.compose.ui.geometry.Rect = reach.let { r ->
         val half = r / 1.4142f
         androidx.compose.ui.geometry.Rect(center.x - half, center.y - half, center.x + half, center.y + half)
@@ -523,14 +534,16 @@ fun ColorPickerDialog(state: EditorState) {
 }
 
 /**
- * The color picker in a window of its own. The window fits the picker when it opens and when the picker switches layout;
- * in between the user can resize it freely (the content scrolls when it is too small). [allowFull] false offers only the
- * 16 Minecraft colors.
+ * The color picker in a window of its own. Picking only changes the color shown in the window; **Select** hands it to
+ * [onSelect] and closes, Cancel (or closing the window) keeps the old one. The window fits the picker when it opens
+ * and when the picker switches layout; in between the user can resize it freely (the content scrolls when it is too
+ * small). [allowFull] false offers only the 16 Minecraft colors.
  */
 @Composable
-fun ColorPickerWindow(state: EditorState, title: String, rgb: Int, onChange: (Int) -> Unit, onClose: () -> Unit, allowFull: Boolean = true) {
-    val windowState = rememberDialogState(size = DpSize(340.dp, 560.dp))
+fun ColorPickerWindow(state: EditorState, title: String, rgb: Int, onSelect: (Int) -> Unit, onClose: () -> Unit, allowFull: Boolean = true) {
+    val windowState = rememberDialogState(size = DpSize(340.dp, 600.dp))
     val density = androidx.compose.ui.platform.LocalDensity.current
+    var draft by remember { mutableStateOf(rgb) }
     var contentHeight by remember { mutableStateOf(0.dp) }
     // Counts the times the window should fit the picker. The fit waits a moment: right at the start the window is not
     // shown yet and would take its first size back, and after a switch the new layout has to be measured first.
@@ -541,14 +554,32 @@ fun ColorPickerWindow(state: EditorState, title: String, rgb: Int, onChange: (In
     }
     DialogWindow(onCloseRequest = onClose, title = title, icon = AppIconPainter, state = windowState) {
         Box(Modifier.fillMaxSize().background(EditorTheme.window).verticalScroll(rememberScrollState())) {
-            ColorPicker(
-                rgb, onChange, state::copyText,
-                // Measured in the scroll area, so the height is the picker's own and does not depend on the window.
+            // Measured in the scroll area, so the height is the content's own and does not depend on the window.
+            Column(
                 Modifier.fillMaxWidth().onSizeChanged { size -> contentHeight = with(density) { size.height.toDp() } }.padding(16.dp),
-                allowFull = allowFull,
-                onLayoutChange = { fitRequests++ },
-                onEyedropper = { ScreenPicker.pick({ onChange(it) }, { state.notify(it, warning = true) }, { state.notify(it) }) },
-            )
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                ColorPicker(
+                    draft, { draft = it }, state::copyText, Modifier.fillMaxWidth(),
+                    allowFull = allowFull,
+                    onLayoutChange = { fitRequests++ },
+                    onEyedropper = { ScreenPicker.pick({ draft = it }, { state.notify(it, warning = true) }, { state.notify(it) }) },
+                )
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Before and after, side by side.
+                    WithTooltip("Now ${HexColor.format(rgb)}") {
+                        Box(Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)).background(rgbColor(rgb)).border(1.dp, EditorTheme.border, RoundedCornerShape(4.dp)))
+                    }
+                    Txt("→", color = EditorTheme.textDim, size = 12.sp)
+                    Box(Modifier.size(20.dp).clip(RoundedCornerShape(4.dp)).background(rgbColor(draft)).border(1.dp, EditorTheme.border, RoundedCornerShape(4.dp)))
+                    Spacer(Modifier.weight(1f))
+                    TextButton("Cancel") { onClose() }
+                    TextButton("Select", primary = true) {
+                        onSelect(draft)
+                        onClose()
+                    }
+                }
+            }
         }
     }
 }
