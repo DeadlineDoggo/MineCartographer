@@ -492,7 +492,13 @@ private fun RightDock(state: EditorState, modifier: Modifier) {
         ToolWindow("Layers", onClose = { state.rightDockVisible = false }, Modifier.fillMaxWidth().weight(1f)) {
             LayersPanel(state)
         }
-        if (state.inspectorVisible) {
+        // The Issues panel takes the Inspector's place while it is open.
+        if (state.issuesVisible) {
+            HDivider()
+            ToolWindow("Unresolved issues", onClose = { state.issuesVisible = false }, Modifier.fillMaxWidth().height(340.dp)) {
+                IssuesPanel(state)
+            }
+        } else if (state.inspectorVisible) {
             HDivider()
             ToolWindow("Inspector", onClose = { state.inspectorVisible = false }, Modifier.fillMaxWidth().height(300.dp)) {
                 InspectorPanel(state)
@@ -623,6 +629,8 @@ private fun StatusBar(state: EditorState, workspace: Workspace) {
         Modifier.fillMaxWidth().height(26.dp).background(EditorTheme.toolbar).padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        IssuesStatus(state)
+        VDivider(Modifier.height(14.dp))
         when (workspace) {
             Workspace.Map -> MapStatus(state)
             Workspace.Atlas -> {

@@ -331,6 +331,27 @@ class EditorState {
         }
     }
 
+    /** The Issues panel, shown in the right dock in place of the Inspector. */
+    var issuesVisible by mutableStateOf(false)
+
+    fun showIssues() {
+        issuesVisible = true
+        rightDockVisible = true
+    }
+
+    /** Waypoints still to be resolved (a change whose mod waypoint is gone), in every open world. */
+    fun waypointIssues(): List<Pair<WorldSource, minecartographer.core.markers.OwnWaypoint>> =
+        worlds.flatMap { w -> waypointOverlays[w.id]?.own.orEmpty().filter { it.issue }.map { w to it } }
+
+    /** Resolves an issue by keeping the waypoint as one of the project's own. */
+    fun keepIssue(world: WorldSource, id: Int) = updateWaypoints(world) { it.keepAsOwn(id) }
+
+    /** Resolves an issue by making it the change of the mod waypoint [key] instead. */
+    fun assignIssue(world: WorldSource, id: Int, key: minecartographer.core.markers.WaypointKey) = updateWaypoints(world) { it.assign(id, key) }
+
+    /** Resolves an issue by deleting the waypoint. */
+    fun deleteIssue(world: WorldSource, id: Int) = updateWaypoints(world) { it.deleteOwn(id) }
+
     /** Back to what the mod has: undoes a change or a deletion of the mod waypoint [key]. */
     fun restoreWaypoint(world: WorldSource, key: minecartographer.core.markers.WaypointKey) = updateWaypoints(world) { it.restore(key) }
 
@@ -467,7 +488,13 @@ class EditorState {
     }
 
     /** Problems that block exporting the active world (empty when it can be exported). */
-    fun exportProblems(): List<String> = activeStack?.let(WorldExporter::validate) ?: listOf("No world open")
+    fun exportProblems(): List<String> {
+        val stack = activeStack ?: return listOf("No world open")
+        val issues = waypointOverlays[stack.world.id]?.issueCount ?: 0
+        val waypoints = if (issues == 0) emptyList() else
+            listOf("$issues unresolved waypoint issue${if (issues == 1) "" else "s"} in \"${stack.world.name}\": resolve ${if (issues == 1) "it" else "them"} first.")
+        return WorldExporter.validate(stack) + waypoints
+    }
 
     /** Writes the active world's visible layers as a new world folder. */
     fun exportActive(output: Path, levelName: String) {

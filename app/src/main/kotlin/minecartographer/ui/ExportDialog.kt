@@ -107,6 +107,13 @@ fun ExportDialog(state: EditorState) {
                     if (problems.isNotEmpty()) {
                         SectionHeader("CAN'T EXPORT")
                         problems.forEach { Txt("• $it", Modifier.padding(vertical = 2.dp), color = EditorTheme.deleted, size = 12.sp, maxLines = 4) }
+                        if ((state.waypointOverlays[base.id]?.issueCount ?: 0) > 0) {
+                            Spacer(Modifier.height(6.dp))
+                            TextButton("Show the issues", icon = Icons.Warning) {
+                                state.showIssues()
+                                state.exportDialogVisible = false
+                            }
+                        }
                     }
                 }
                 Spacer(Modifier.height(12.dp))

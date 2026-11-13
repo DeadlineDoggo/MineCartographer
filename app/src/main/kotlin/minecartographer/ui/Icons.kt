@@ -115,6 +115,13 @@ object Icons {
         }
     }
 
+    /** A triangle with an exclamation mark. */
+    val Warning = EditorIcon { color ->
+        drawPath(poly(0.5f, 0.1f, 0.94f, 0.88f, 0.06f, 0.88f), color, style = stroke())
+        line(color, 0.5f, 0.38f, 0.5f, 0.6f)
+        drawCircle(color, radius = size.minDimension * 0.05f, center = Offset(size.width * 0.5f, size.height * 0.74f))
+    }
+
     /** A circled "i". */
     val Info = EditorIcon { color ->
         drawCircle(color, radius = size.minDimension * 0.42f, style = stroke())
