@@ -344,11 +344,11 @@ object ProjectFile {
         return ProjectDocument(worlds, textures, active, selection, editor, ids, root.children("stack"), tabs, tabsEl?.int("active"), waypoints)
     }
 
-    /** Name of the file [writeSources] puts into an exported world. */
+    /** Name of the file [writeSources] puts into an export (the bundle folder, next to the world). */
     const val SOURCES_FILE = "minecartographer-sources.xml"
 
     /**
-     * Writes [SOURCES_FILE] into an exported world: every world that chunks came from, how many, and the
+     * Writes [SOURCES_FILE] into [worldFolder] (an export's bundle folder): every world that chunks came from, how many, and the
      * textures they were drawn with, so whatever finishes the world later (resource packs, mods) knows
      * where its blocks and textures come from. Minecraft ignores the file.
      */

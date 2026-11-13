@@ -32,12 +32,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.rememberDialogState
-import minecartographer.core.anvil.AnvilWorld
+import minecartographer.core.anvil.ExportBundle
 import minecartographer.core.edit.ChunkEdit
 import minecartographer.core.edit.ChunkLayer
 import minecartographer.editor.EditorState
 import java.nio.file.Path
-import kotlin.io.path.exists
 
 /** Settings and summary for writing the active world's layers to a new world folder. */
 @Composable
@@ -52,10 +51,10 @@ fun ExportDialog(state: EditorState) {
         state = rememberDialogState(size = DpSize(560.dp, 440.dp)),
     ) {
         var name by remember { mutableStateOf("${base.name} merged") }
-        var parent by remember { mutableStateOf((base as? AnvilWorld)?.folder?.parent ?: Path.of(System.getProperty("user.home"))) }
-        val target = parent.resolve(folderName(name))
+        // Not the saves folder by default: the bundle holds more than the world, Minecraft would list it as a broken save.
+        var parent by remember { mutableStateOf(state.lastExportParent ?: Path.of(System.getProperty("user.home"))) }
+        val bundle = ExportBundle.folderFor(parent, name)
         val problems = remember(stack) { state.exportProblems() }
-        val exists = target.exists()
 
         val visibleLayers = stack.layers.filterIsInstance<ChunkLayer>().filter { it.visible }
         val sources = (visibleLayers.flatMap { it.chunks.values } +
@@ -67,6 +66,7 @@ fun ExportDialog(state: EditorState) {
         // What is worth knowing before exporting: opened from the info button, over the dialog's content.
         val notes = buildList {
             add("The original saves are only read, never changed.")
+            add("The export is a folder of its own: the world, a README that says where to copy it, and minecartographer-sources.xml. Copy the world folder inside it into your game's saves folder.")
             if (older.isNotEmpty()) add("Chunks from ${older.joinToString { it.versionLabel }} keep their own version. Minecraft ${base.versionLabel} upgrades them the first time the merged world is opened.")
             addAll(minecartographer.core.anvil.WorldExporter.notes(stack))
             if (erased > 0) add("Erased chunks are left out, so Minecraft generates fresh terrain there when you visit.")
@@ -74,7 +74,7 @@ fun ExportDialog(state: EditorState) {
             add("Only the overworld is merged; the Nether, the End, player data and maps come from \"${base.name}\".")
         }
         var infoOpen by remember { mutableStateOf(false) }
-        val folder = folderName(name)
+        val folder = ExportBundle.folderName(name)
 
         Box(Modifier.fillMaxSize().background(EditorTheme.window)) {
             Column(Modifier.fillMaxSize().padding(20.dp)) {
@@ -89,12 +89,15 @@ fun ExportDialog(state: EditorState) {
                         Txt(parent.toString(), Modifier.weight(1f), size = 12.sp, mono = true)
                         Spacer(Modifier.width(8.dp))
                         TextButton("Browse…", icon = Icons.Folder) {
-                            FileDialogs.chooseFolder("Choose where to create the merged world", parent)?.let { parent = it }
+                            FileDialogs.chooseFolder("Choose where to create the export folder", parent)?.let { parent = it }
                         }
                     }
-                    // The folder that will be made, only when it is not simply the name typed above.
-                    if (exists) Txt("A folder named \"$folder\" already exists there. Choose another name.", Modifier.padding(top = 4.dp), color = EditorTheme.warning, size = 12.sp, maxLines = 2)
-                    else if (folder != name.trim()) Txt("Folder name: $folder", Modifier.padding(top = 4.dp), color = EditorTheme.textFaint, size = 11.sp, mono = true)
+                    // What will be made there, shown once.
+                    Txt("→ ${bundle.fileName}/$folder/", Modifier.padding(top = 4.dp), color = EditorTheme.textFaint, size = 11.sp, mono = true, maxLines = 2)
+                    if (parent.fileName?.toString() == "saves") Txt(
+                        "This is a saves folder: Minecraft would list the export folder as a broken world. The world inside it is what goes into saves.",
+                        Modifier.padding(top = 4.dp), color = EditorTheme.warning, size = 12.sp, maxLines = 3,
+                    )
 
                     SectionHeader("CONTENTS")
                     KeyValue("Base world", "${base.name} · ${base.versionLabel}")
@@ -121,8 +124,8 @@ fun ExportDialog(state: EditorState) {
                     TextButton("Cancel") { state.exportDialogVisible = false }
                     TextButton(
                         "Export", primary = true,
-                        enabled = problems.isEmpty() && !exists && name.isNotBlank() && !state.busy,
-                    ) { state.exportActive(target, name.trim()) }
+                        enabled = problems.isEmpty() && name.isNotBlank() && !state.busy,
+                    ) { state.exportActive(parent, name.trim()) }
                 }
             }
 
@@ -152,6 +155,3 @@ fun ExportDialog(state: EditorState) {
         }
     }
 }
-
-/** World names may contain characters Windows doesn't allow in folder names. */
-private fun folderName(name: String) = name.trim().replace(Regex("""[<>:"/\\|?*\u0000-\u001F]"""), "_").trimEnd('.', ' ').ifEmpty { "Merged world" }

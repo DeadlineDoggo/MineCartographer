@@ -27,8 +27,10 @@ import minecartographer.core.markers.MarkerReader
 import minecartographer.core.markers.ShownWaypoint
 import minecartographer.core.markers.WaypointData
 import minecartographer.core.markers.WaypointOverlay
+import minecartographer.core.anvil.ExportBundle
 import minecartographer.core.anvil.WorldExporter
 import minecartographer.core.anvil.WorldInfo
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.math.floor
 import kotlin.math.sqrt
@@ -496,31 +498,45 @@ class EditorState {
         return WorldExporter.validate(stack) + waypoints
     }
 
-    /** Writes the active world's visible layers as a new world folder. */
-    fun exportActive(output: Path, levelName: String) {
+    /** Where the last export went; the export dialog starts there. */
+    var lastExportParent by mutableStateOf<Path?>(null)
+
+    /**
+     * Writes the active world's visible layers into a new bundle folder in [parent] (see [ExportBundle]): the world as
+     * [levelName], the sources file and a README.
+     */
+    fun exportActive(parent: Path, levelName: String) {
         val stack = activeStack ?: return
         if (busy) return notify("Wait for the current task to finish", warning = true)
         busy = true
         exportDialogVisible = false
+        lastExportParent = parent
         val textures = worlds.associateWith(::texturesOf)
         val title = "Exporting $levelName"
         loading = LoadingStep(title, "Preparing", waitForTiles = false)
         val throttle = ProgressThrottle()
         scope.launch(Dispatchers.IO) {
             val result = runCatching {
-                WorldExporter.export(stack, output, levelName) { step, done, total ->
+                val bundle = ExportBundle.folderFor(parent, levelName)
+                val worldFolder = ExportBundle.folderName(levelName)
+                val output = bundle.resolve(worldFolder)
+                Files.createDirectories(bundle)
+                val report = WorldExporter.export(stack, output, levelName) { step, done, total ->
                     if (throttle.ready(done == total)) scope.launch(Dispatchers.Main) {
                         if (busy) loading = LoadingStep(title, "$step $done / $total", if (total > 0) done.toFloat() / total else null, waitForTiles = false)
                     }
-                }.also { ProjectFile.writeSources(output, stack, textures, AppInfo.version) }
+                }
+                ProjectFile.writeSources(bundle, stack, textures, AppInfo.version)
+                ExportBundle.writeReadme(bundle, ExportBundle.readme(levelName, worldFolder, stack.world, AppInfo.version))
+                Triple(report, bundle, output)
             }
             withContext(Dispatchers.Main) {
                 busy = false
                 loading = null
-                result.onSuccess { r ->
+                result.onSuccess { (r, bundle, output) ->
                     val extra = if (r.warnings.isEmpty()) "" else " (${r.warnings.size} warnings, see log)"
                     r.warnings.forEach(System.err::println)
-                    notify("Exported ${r.chunks} chunks (${r.relocated} moved) to $output$extra")
+                    notify("Exported ${r.chunks} chunks (${r.relocated} moved) to $bundle$extra")
                     WorldLibrary.remember(output)
                 }.onFailure {
                     notify("Export failed: ${it.message}", warning = true)
