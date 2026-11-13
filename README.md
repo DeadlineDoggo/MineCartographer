@@ -275,6 +275,8 @@ published at once as a pre-release. The tag must equal `appVersion` in `gradle.p
    └── journeymap/                   JourneyMap's waypoints        } the one that holds saves
    ```
 
+   ![An export folder in a file manager](docs/export-folder.png)
+
    Export waits while waypoints have unresolved issues (see *Waypoints*).
 
 ### Projects
