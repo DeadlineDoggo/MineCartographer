@@ -522,7 +522,14 @@ private fun BoxScope.ViewportOverlay(state: EditorState) {
     RenderModeSwitcher(state, Modifier.align(Alignment.BottomStart).padding(12.dp))
     LoadingLayer(state, visible = !state.startingUp && state.loading != null, fullWindow = false)
     val clip = state.clipboard
-    if (state.pasteMode && clip != null) {
+    if (state.placingWaypoint) {
+        Txt(
+            "Click on the map to place the new waypoint. Esc to cancel.",
+            Modifier.align(Alignment.TopCenter).padding(12.dp).overMap(state).clip(RoundedCornerShape(4.dp))
+                .background(EditorTheme.accent).padding(horizontal = 10.dp, vertical = 5.dp),
+            color = Color.White, size = 12.sp, weight = FontWeight.SemiBold,
+        )
+    } else if (state.pasteMode && clip != null) {
         Txt(
             "Placing ${clip.size} chunks as a new layer. Click to place, Shift+click to keep placing, Esc to cancel.",
             Modifier.align(Alignment.TopCenter).padding(12.dp).overMap(state).clip(RoundedCornerShape(4.dp))

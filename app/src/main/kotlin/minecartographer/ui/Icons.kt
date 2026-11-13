@@ -95,6 +95,8 @@ object Icons {
         drawPath(poly(0.96f, 0.5f, 0.68f, 0.5f, 0.82f, 0.28f), color)
     }
 
+    val Plus = EditorIcon { color -> line(color, 0.5f, 0.2f, 0.5f, 0.8f); line(color, 0.2f, 0.5f, 0.8f, 0.5f) }
+
     /** An eyedropper, leaning right: the rubber bulb top right, the collar, the glass tube and its tip bottom left. */
     val Pipette = EditorIcon { color ->
         val w = size.width

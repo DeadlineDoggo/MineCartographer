@@ -18,16 +18,19 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import minecartographer.core.ChunkPos
 import minecartographer.core.Rotation
+import minecartographer.core.ChunkSurface
 import minecartographer.core.WorldSource
 import minecartographer.core.anvil.AnvilWorld
 import minecartographer.core.markers.Marker
 import minecartographer.core.markers.MarkerKind
 import minecartographer.core.markers.MarkerReader
 import minecartographer.core.markers.ShownWaypoint
+import minecartographer.core.markers.WaypointData
 import minecartographer.core.markers.WaypointOverlay
 import minecartographer.core.anvil.WorldExporter
 import minecartographer.core.anvil.WorldInfo
 import java.nio.file.Path
+import kotlin.math.floor
 import kotlin.math.sqrt
 import minecartographer.core.edit.BaseLayer
 import minecartographer.core.edit.ChunkClipboard
@@ -226,6 +229,110 @@ class EditorState {
         val banners = if (showBanners) markers[world.id].orEmpty().filter { it.kind == MarkerKind.Banner } else emptyList()
         return banners + if (showWaypoints) shownWaypoints(world).map { it.marker } else emptyList()
     }
+
+    /** The waypoints of [world] that were deleted in this project, so the panel can bring them back. */
+    fun deletedWaypoints(world: WorldSource): List<Marker> =
+        (waypointOverlays[world.id] ?: WaypointOverlay()).deletedFrom(markers[world.id].orEmpty())
+
+    /** The row the Waypoints panel should open and scroll to (a waypoint just made), by the id the panel gives rows. */
+    var focusWaypoint by mutableStateOf<String?>(null)
+
+    /** Placing a new waypoint: the next left click on the map puts it there (Esc cancels). */
+    var placingWaypoint by mutableStateOf(false)
+
+    /**
+     * Places the new waypoint on the block seen at ([sx], [sy]) pixels in a map of [width] x [height]: the top of the
+     * column under the pointer, with its height. Reading the chunks' surfaces may take a moment, so it is done in the
+     * background; where nothing is drawn the waypoint goes to the usual surface height, its height left unknown.
+     */
+    fun placeWaypointAt(sx: Float, sy: Float, width: Float, height: Float) {
+        val world = activeWorld ?: return
+        val stack = activeStack ?: return
+        placingWaypoint = false
+        val view = view
+        val hs = renderSettings.heightScale.toDouble()
+        val turn = rotation
+        val u = view.screenToU(sx, width)
+        val v = view.screenToV(sy, height)
+        scope.launch(Dispatchers.IO) {
+            val (x, y, z) = groundUnder(stack, view, hs, turn, u, v)
+            withContext(Dispatchers.Main) { addWaypointAt(world, x, y, z) }
+        }
+    }
+
+    /** The block column seen at the view point ([u], [v]): walks down the line of sight until it meets a column at least that high. */
+    private fun groundUnder(stack: LayerStack, view: IsoView, hs: Double, turn: Int, u: Double, v: Double): Triple<Int, Int?, Int> {
+        val surfaces = HashMap<ChunkPos, Pair<ChunkSurface, Int>?>()
+        fun heightAt(x: Int, z: Int): Int? {
+            val pos = ChunkPos(Math.floorDiv(x, 16), Math.floorDiv(z, 16))
+            val found = surfaces.getOrPut(pos) {
+                stack.resolve(pos)?.let { ref -> runCatching { ref.world.loadSurface(ref.pos) }.getOrNull()?.let { it to ref.dy } }
+            } ?: return null
+            // Turned chunks are read unturned: the height is close, not exact, there.
+            return found.first.height(x - pos.x * 16, z - pos.z * 16) + found.second
+        }
+        fun world(vx: Double, vz: Double): Pair<Int, Int> {
+            val (wx, wz) = Rotation.point(4 - turn, vx, vz)
+            return floor(wx).toInt() to floor(wz).toInt()
+        }
+        if (view.flat) {
+            val (vx, vz) = view.ground(u, v, 0.0, hs)
+            val (x, z) = world(vx, vz)
+            return Triple(x, heightAt(x, z), z)
+        }
+        for (y in VIEW_TOP downTo VIEW_BOTTOM) {
+            // A column of height h shows its top at h + 1, the height the line is looked at.
+            val (vx, vz) = view.ground(u, v, y + 1.0, hs)
+            val (x, z) = world(vx, vz)
+            val h = heightAt(x, z) ?: continue
+            if (h >= y) return Triple(x, h, z)
+        }
+        val (vx, vz) = view.ground(u, v, SURFACE_Y, hs)
+        val (x, z) = world(vx, vz)
+        return Triple(x, null, z)
+    }
+
+    /** A new waypoint of the project at ([x], [y], [z]), named and colored by default; the panel opens on it. */
+    fun addWaypointAt(world: WorldSource, x: Int, y: Int?, z: Int) {
+        if (worlds.none { it.id == world.id }) return
+        var id = 0
+        updateWaypoints(world) { overlay ->
+            val color = intArrayOf(0xFF5555, 0xFFAA00, 0xFFFF55, 0x55FF55, 0x55FFFF, 0x5555FF, 0xFF55FF)[overlay.nextId % 7]
+            val (next, newId) = overlay.add(WaypointData("New waypoint", x, y, z, color))
+            id = newId
+            next
+        }
+        showWaypoints = true
+        waypointsVisible = true
+        focusWaypoint = "own:$id"
+    }
+
+    /** Changes one waypoint: [change] gets what it is now and returns what it should be. A mod waypoint changed back to what the mod has is no longer changed. */
+    fun editWaypoint(world: WorldSource, shown: ShownWaypoint, change: (WaypointData) -> WaypointData) {
+        val next = change(WaypointData.of(shown.marker))
+        val own = shown.ownId
+        val key = shown.marker.key
+        when {
+            own != null -> updateWaypoints(world) { it.editOwn(own, next) }
+            key != null -> {
+                val original = markers[world.id].orEmpty().firstOrNull { it.key == key }?.let(WaypointData::of)
+                updateWaypoints(world) { if (next == original) it.restore(key) else it.edit(key, next) }
+            }
+        }
+    }
+
+    /** Deletes a waypoint of the project. A mod's waypoint is only hidden (the mod's files stay) and can be restored. */
+    fun deleteWaypoint(world: WorldSource, shown: ShownWaypoint) {
+        val own = shown.ownId
+        val key = shown.marker.key
+        when {
+            own != null -> updateWaypoints(world) { it.deleteOwn(own) }
+            key != null -> updateWaypoints(world) { it.delete(key) }
+        }
+    }
+
+    /** Back to what the mod has: undoes a change or a deletion of the mod waypoint [key]. */
+    fun restoreWaypoint(world: WorldSource, key: minecartographer.core.markers.WaypointKey) = updateWaypoints(world) { it.restore(key) }
 
     /** Changes the waypoint overlay of [world]; the project counts as changed when [change] made a difference. */
     fun updateWaypoints(world: WorldSource, change: (WaypointOverlay) -> WaypointOverlay) {
@@ -1700,6 +1807,9 @@ class EditorState {
     companion object {
         /** Typical terrain height used to center the camera before chunk heights are known. */
         const val SURFACE_Y = 64.0
+        /** Heights the line of sight is walked through when placing on the map (every version's build limits). */
+        private const val VIEW_TOP = 320
+        private const val VIEW_BOTTOM = -64
         private const val MAX_CHUNKS_ON_FIT = 4000
         /** 1.13: block names from here on match the client jar of the world's own version. Older worlds need a newer jar. */
         private const val FLATTENING_DATA_VERSION = 1519

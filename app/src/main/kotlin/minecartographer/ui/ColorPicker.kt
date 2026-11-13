@@ -515,13 +515,20 @@ private fun HexRow(rgb: Int, onRgb: (Int) -> Unit, onCopy: (String) -> Unit) {
     }
 }
 
-/**
- * The color picker in a window of its own, opened from the View menu. The window fits the picker when it opens and when
- * the picker switches layout; in between the user can resize it freely (the content scrolls when it is too small).
- */
+/** The color picker window opened from the View menu. */
 @Composable
 fun ColorPickerDialog(state: EditorState) {
     if (!state.colorPickerVisible) return
+    ColorPickerWindow(state, "Color picker", state.pickedColor, { state.pickedColor = it }, { state.colorPickerVisible = false })
+}
+
+/**
+ * The color picker in a window of its own. The window fits the picker when it opens and when the picker switches layout;
+ * in between the user can resize it freely (the content scrolls when it is too small). [allowFull] false offers only the
+ * 16 Minecraft colors.
+ */
+@Composable
+fun ColorPickerWindow(state: EditorState, title: String, rgb: Int, onChange: (Int) -> Unit, onClose: () -> Unit, allowFull: Boolean = true) {
     val windowState = rememberDialogState(size = DpSize(340.dp, 560.dp))
     val density = androidx.compose.ui.platform.LocalDensity.current
     var contentHeight by remember { mutableStateOf(0.dp) }
@@ -532,19 +539,15 @@ fun ColorPickerDialog(state: EditorState) {
         kotlinx.coroutines.delay(80)
         if (contentHeight > 0.dp) windowState.size = DpSize(windowState.size.width, contentHeight + TITLE_BAR)
     }
-    DialogWindow(
-        onCloseRequest = { state.colorPickerVisible = false },
-        title = "Color picker",
-        icon = AppIconPainter,
-        state = windowState,
-    ) {
+    DialogWindow(onCloseRequest = onClose, title = title, icon = AppIconPainter, state = windowState) {
         Box(Modifier.fillMaxSize().background(EditorTheme.window).verticalScroll(rememberScrollState())) {
             ColorPicker(
-                state.pickedColor, { state.pickedColor = it }, state::copyText,
+                rgb, onChange, state::copyText,
                 // Measured in the scroll area, so the height is the picker's own and does not depend on the window.
                 Modifier.fillMaxWidth().onSizeChanged { size -> contentHeight = with(density) { size.height.toDp() } }.padding(16.dp),
+                allowFull = allowFull,
                 onLayoutChange = { fitRequests++ },
-                onEyedropper = { ScreenPicker.pick({ state.pickedColor = it }, { state.notify(it, warning = true) }, { state.notify(it) }) },
+                onEyedropper = { ScreenPicker.pick({ onChange(it) }, { state.notify(it, warning = true) }, { state.notify(it) }) },
             )
         }
     }

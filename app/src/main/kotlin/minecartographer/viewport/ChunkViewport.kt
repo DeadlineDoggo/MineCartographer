@@ -218,7 +218,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
 
     val cursor = when {
         drag == Drag.Pan || drag == Drag.MoveLayer -> PointerIcon(Cursor(Cursor.MOVE_CURSOR))
-        state.pasteMode -> PointerIcon(Cursor(Cursor.CROSSHAIR_CURSOR))
+        state.placingWaypoint || state.pasteMode -> PointerIcon(Cursor(Cursor.CROSSHAIR_CURSOR))
         state.tool == Tool.Pan -> PointerIcon(Cursor(Cursor.HAND_CURSOR))
         state.tool == Tool.MoveLayer -> PointerIcon(Cursor(Cursor.MOVE_CURSOR))
         state.tool == Tool.RectSelect -> PointerIcon(Cursor(Cursor.CROSSHAIR_CURSOR))
@@ -273,6 +273,10 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                                         Drag.None
                                     }
                                     !b.isPrimaryPressed -> Drag.None
+                                    state.placingWaypoint -> {
+                                        state.placeWaypointAt(p.x, p.y, w, h)
+                                        Drag.None
+                                    }
                                     state.pasteMode -> {
                                         state.pasteAt(hit ?: pickGround(p, w, h), keepPlacing = mods.isShiftPressed)
                                         Drag.None

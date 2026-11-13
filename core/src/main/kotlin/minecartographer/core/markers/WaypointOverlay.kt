@@ -1,7 +1,11 @@
 package minecartographer.core.markers
 
 /** What the app knows about a waypoint it shows: the values a user can change. [rgb] is 0xRRGGBB, [y] null when unknown. */
-data class WaypointData(val name: String, val x: Int, val y: Int?, val z: Int, val rgb: Int)
+data class WaypointData(val name: String, val x: Int, val y: Int?, val z: Int, val rgb: Int) {
+    companion object {
+        fun of(m: Marker) = WaypointData(m.name, m.x, m.y, m.z, m.rgb)
+    }
+}
 
 /** A waypoint made in the app. [issue] is set while it still has to be resolved (see [WaypointOverlay.reconcile]). */
 data class OwnWaypoint(val id: Int, val data: WaypointData, val issue: Boolean = false)
@@ -68,6 +72,10 @@ data class WaypointOverlay(
         }
         return copy(edits = edits.filterKeys { it in keys }, own = own + orphans, nextId = next)
     }
+
+    /** The waypoints of [mod] that were deleted here, so they can be brought back. */
+    fun deletedFrom(mod: List<Marker>): List<Marker> =
+        mod.filter { m -> m.kind == MarkerKind.Waypoint && m.key != null && m.key in edits && edits[m.key] == null }
 
     /** The waypoints of [mod] (map banners are ignored) with the changes applied, then the own ones. */
     fun apply(mod: List<Marker>): List<ShownWaypoint> = buildList {

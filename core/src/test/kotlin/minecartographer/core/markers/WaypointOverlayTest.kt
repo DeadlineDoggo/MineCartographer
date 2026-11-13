@@ -82,4 +82,12 @@ class WaypointOverlayTest {
         assertNull(b.deleteOwn(id1).own.firstOrNull { it.id == id1 })
         assertEquals(3, b.deleteOwn(id1).nextId, "an id is not used again")
     }
+
+    @Test
+    fun `deleted waypoints can be listed and brought back`() {
+        val overlay = WaypointOverlay().delete(mine.key!!).edit(home.key!!, data("Base"))
+        assertEquals(listOf(mine), overlay.deletedFrom(listOf(home, mine, banner)))
+        assertEquals(emptyList(), overlay.restore(mine.key!!).deletedFrom(listOf(home, mine)))
+        assertEquals(WaypointData("Home", 1, 64, 0, 0xFF5555), WaypointData.of(home))
+    }
 }
