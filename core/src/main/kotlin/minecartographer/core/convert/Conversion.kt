@@ -63,12 +63,19 @@ class Conversion(
 
     private fun vanilla(key: Int): Boolean = Upgrade.tables?.blocks?.let { key in it || (key and 15.inv()) in it } ?: ((key ushr 4) < 256)
 
-    /** A block entry of the source, in the source's own format, with foreign blocks replaced. */
+    /**
+     * A block entry of the source, in the source's own format, with foreign blocks replaced. Before 1.13 Forge numbers
+     * modded blocks per world, so a block the target has too is given the target's number for it.
+     */
     fun remapEntry(entry: Any): Any = when (entry) {
         is Int -> {
             val state = source.legacy.state(entry ushr 4, entry and 15)
-            if (!foreignKey(entry, state)) entry
-            else targetIds[state.name]?.let { (it shl 4) or (entry and 15) } ?: legacyKey(mapped(state).target)
+            val targetId = if (state.name.startsWith("minecraft:")) null else targetIds[state.name]
+            when {
+                targetId != null -> (targetId shl 4) or (entry and 15)
+                !foreignKey(entry, state) -> entry
+                else -> legacyKey(mapped(state).target)
+            }
         }
         is CompoundTag -> stateOf(entry).let { if (foreign(it)) entryOf(mapped(it).target) else entry }
         else -> entry
@@ -114,7 +121,9 @@ class Conversion(
         fun parse(text: String): BlockState {
             val bracket = text.indexOf('[')
             if (bracket < 0) return BlockState.of(text)
-            val props = text.substring(bracket + 1, text.lastIndexOf(']')).split(',').mapNotNull {
+            // A missing `]` (a hand-edited project) reads to the end rather than failing.
+            val close = text.lastIndexOf(']').takeIf { it > bracket } ?: text.length
+            val props = text.substring(bracket + 1, close).split(',').mapNotNull {
                 val i = it.indexOf('=')
                 if (i < 0) null else it.substring(0, i).trim() to it.substring(i + 1).trim()
             }.toMap()
