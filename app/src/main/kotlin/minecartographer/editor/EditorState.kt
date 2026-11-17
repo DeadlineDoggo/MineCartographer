@@ -523,17 +523,23 @@ class EditorState {
                 val worldFolder = ExportBundle.folderName(levelName)
                 val output = bundle.resolve(worldFolder)
                 Files.createDirectories(bundle)
-                val report = WorldExporter.export(stack, output, levelName) { step, done, total ->
-                    if (throttle.ready(done == total)) scope.launch(Dispatchers.Main) {
-                        if (busy) loading = LoadingStep(title, "$step $done / $total", if (total > 0) done.toFloat() / total else null, waitForTiles = false)
+                try {
+                    val report = WorldExporter.export(stack, output, levelName) { step, done, total ->
+                        if (throttle.ready(done == total)) scope.launch(Dispatchers.Main) {
+                            if (busy) loading = LoadingStep(title, "$step $done / $total", if (total > 0) done.toFloat() / total else null, waitForTiles = false)
+                        }
                     }
+                    ProjectFile.writeSources(bundle, stack, textures, AppInfo.version)
+                    val sections = listOfNotNull(
+                        waypointFormats?.takeIf { waypoints.isNotEmpty() }?.let { ExportBundle.writeWaypoints(bundle, worldFolder, waypoints, it, AppInfo.version) },
+                    )
+                    ExportBundle.writeReadme(bundle, ExportBundle.readme(levelName, worldFolder, stack.world, AppInfo.version, sections))
+                    Triple(report, bundle, output)
+                } catch (e: Throwable) {
+                    // The bundle folder was made for this export: a failed one leaves nothing half written behind.
+                    bundle.toFile().deleteRecursively()
+                    throw e
                 }
-                ProjectFile.writeSources(bundle, stack, textures, AppInfo.version)
-                val sections = listOfNotNull(
-                    waypointFormats?.takeIf { waypoints.isNotEmpty() }?.let { ExportBundle.writeWaypoints(bundle, worldFolder, waypoints, it, AppInfo.version) },
-                )
-                ExportBundle.writeReadme(bundle, ExportBundle.readme(levelName, worldFolder, stack.world, AppInfo.version, sections))
-                Triple(report, bundle, output)
             }
             withContext(Dispatchers.Main) {
                 busy = false

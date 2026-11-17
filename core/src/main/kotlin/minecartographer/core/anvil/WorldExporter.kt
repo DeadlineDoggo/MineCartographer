@@ -102,6 +102,17 @@ object WorldExporter {
         sourceWorlds(stack).filterIsInstance<AnvilWorld>().forEach {
             if (outNorm.startsWith(it.folder.toAbsolutePath().normalize())) throw Problem("Can't export into a source world's folder")
         }
+        // A failed export removes what it wrote, so the folder can be used again (an empty folder given stays, empty).
+        val existed = output.exists()
+        try {
+            return write(stack, base, output, levelName, progress)
+        } catch (e: Throwable) {
+            runCatching { if (existed) output.listDirectoryEntries().forEach(::deleteTree) else deleteTree(output) }
+            throw e
+        }
+    }
+
+    private fun write(stack: LayerStack, base: AnvilWorld, output: Path, levelName: String, progress: (String, Int, Int) -> Unit): Report {
         val warnings = ArrayList<String>()
         val targetDv = base.dataVersion ?: 0
 
@@ -127,45 +138,52 @@ object WorldExporter {
             val entityData = HashMap<ChunkPos, RawChunk>()
             for (pos in chunks) {
                 val ref = stack.resolve(pos) ?: continue
-                val source = ref.world as AnvilWorld
-                val layer = stack.layerAt(pos)
-                val conversion = if (source == base) null else conversions.getOrPut(source to layer?.blockMap.orEmpty()) {
-                    Conversion(source, base, layer?.blockMap.orEmpty())
-                }
-                if (ref.transformed || conversion?.remaps == true) {
-                    // The original chunk here shows below a raised or cut one, unless it was erased.
-                    val under = base.takeIf { !stack.base.isErased(pos) }
-                    val built = ChunkTransform.build(ref, pos, under, conversion)
-                    if (built == null) {
+                // A chunk that can't be read (truncated file, bad compression, broken NBT) is left out with a warning.
+                try {
+                    val source = ref.world as AnvilWorld
+                    val layer = stack.layerAt(pos)
+                    val conversion = if (source == base) null else conversions.getOrPut(source to layer?.blockMap.orEmpty()) {
+                        Conversion(source, base, layer?.blockMap.orEmpty())
+                    }
+                    if (ref.transformed || conversion?.remaps == true) {
+                        // The original chunk here shows below a raised or cut one, unless it was erased.
+                        val under = base.takeIf { !stack.base.isErased(pos) }
+                        val built = ChunkTransform.build(ref, pos, under, conversion)
+                        if (built == null) {
+                            warnings += "Chunk ${ref.pos} of ${source.name} could not be read"
+                            continue
+                        }
+                        blockData[pos] = RawChunk.of(built.first)
+                        built.second?.let { entityData[pos] = RawChunk.of(it) }
+                        relocated++
+                        continue
+                    }
+                    val raw = source.readChunk(ref.pos)
+                    if (raw == null) {
                         warnings += "Chunk ${ref.pos} of ${source.name} could not be read"
                         continue
                     }
-                    blockData[pos] = RawChunk.of(built.first)
-                    built.second?.let { entityData[pos] = RawChunk.of(it) }
-                    relocated++
-                    continue
-                }
-                val raw = source.readChunk(ref.pos)
-                if (raw == null) {
-                    warnings += "Chunk ${ref.pos} of ${source.name} could not be read"
-                    continue
-                }
-                if (source == base && ref.pos == pos) {
-                    blockData[pos] = raw // untouched chunk: copy the stored bytes
-                    base.readEntities(pos)?.let { entityData[pos] = it }
-                    unchanged++
-                } else {
-                    val nbt = raw.nbt()
-                    relocateChunk(nbt, ref.pos, pos)
-                    blockData[pos] = RawChunk.of(nbt)
-                    if ((source.dataVersion ?: 0) >= DV_ENTITY_FILES) {
-                        source.readEntities(ref.pos)?.let { entities ->
-                            val e = entities.nbt()
-                            relocateEntityChunk(e, ref.pos, pos)
-                            entityData[pos] = RawChunk.of(e)
+                    if (source == base && ref.pos == pos) {
+                        blockData[pos] = raw // untouched chunk: copy the stored bytes
+                        base.readEntities(pos)?.let { entityData[pos] = it }
+                        unchanged++
+                    } else {
+                        val nbt = raw.nbt()
+                        relocateChunk(nbt, ref.pos, pos)
+                        blockData[pos] = RawChunk.of(nbt)
+                        if ((source.dataVersion ?: 0) >= DV_ENTITY_FILES) {
+                            source.readEntities(ref.pos)?.let { entities ->
+                                val e = entities.nbt()
+                                relocateEntityChunk(e, ref.pos, pos)
+                                entityData[pos] = RawChunk.of(e)
+                            }
                         }
+                        relocated++
                     }
-                    relocated++
+                } catch (e: Exception) {
+                    blockData.remove(pos)
+                    entityData.remove(pos)
+                    warnings += "Chunk ${ref.pos} of ${ref.world.name} could not be read: ${e.message ?: e.javaClass.simpleName}"
                 }
             }
             val name = RegionFile.fileName(region.first, region.second)
@@ -250,6 +268,21 @@ object WorldExporter {
             e["UUIDLeast"] = LongTag(id.leastSignificantBits)
         }
         e.list("Passengers")?.compounds()?.forEach { relocateEntity(it, dx, dz) }
+    }
+
+    private fun deleteTree(path: Path) {
+        if (!path.exists()) return
+        Files.walkFileTree(path, object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                Files.delete(file)
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
+                Files.delete(dir)
+                return FileVisitResult.CONTINUE
+            }
+        })
     }
 
     private fun copyTree(from: Path, to: Path, skip: Set<String>) {
