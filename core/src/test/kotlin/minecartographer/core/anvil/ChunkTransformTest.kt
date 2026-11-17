@@ -124,18 +124,7 @@ class ChunkTransformTest {
             }
         }
         val under = chunk(newer) { _, y, _ -> if (y < 70) entry("minecraft:dirt") else null }.apply { putInt("DataVersion", 3700) }
-        RegionWriter.write(tmp.resolve("region").resolve(RegionFile.fileName(0, 0)), mapOf(older to RawChunk.of(source), newer to RawChunk.of(under)))
-        tmp.resolve("level.dat").outputStream().use {
-            Nbt.writeGzip(it, CompoundTag().apply {
-                this["Data"] = CompoundTag().apply {
-                    putInt("version", WorldInfo.ANVIL)
-                    putInt("DataVersion", 3700)
-                    this["LevelName"] = StringTag("Two versions")
-                    this["Version"] = CompoundTag().apply { this["Name"] = StringTag("1.20.4") }
-                }
-            })
-        }
-        val world = AnvilWorld.open(tmp)
+        val world = world1204(tmp, mapOf(older to source, newer to under))
         try {
             // Raised by 3 and cut at 66 over the newer chunk, as the export and the map build it.
             val (out, _) = ChunkTransform.build(ChunkRef(world, older, dy = 3, cut = 66), newer, world)!!
@@ -147,6 +136,47 @@ class ChunkTransformTest {
         } finally {
             world.close()
         }
+    }
+
+    @Test
+    fun `a newer chunk laid over an older original upgrades the original instead of being labeled older`(@TempDir tmp: Path) {
+        // The other way round: the pasted chunk is 1.20.4 (3700), the original below is still 1.20.1 (3465).
+        val newer = ChunkPos(0, 0)
+        val older = ChunkPos(1, 0)
+        val source = chunk(newer) { _, y, _ -> if (y < 64) entry("minecraft:sandstone") else null }.apply { putInt("DataVersion", 3700) }
+        val under = chunk(older) { _, y, _ ->
+            when {
+                y < 20 -> entry("minecraft:dirt")
+                y == 20 -> entry("minecraft:grass") // short_grass since 1.20.3
+                else -> null
+            }
+        }
+        val world = world1204(tmp, mapOf(newer to source, older to under))
+        try {
+            val (out, _) = ChunkTransform.build(ChunkRef(world, newer, dy = 3, cut = 40), older, world)!!
+            assertEquals(3700, out.int("DataVersion"), "labeled with the source's version, so Minecraft doesn't upgrade it again")
+            assertEquals("minecraft:short_grass", blockAt(out, 4, 20, 4).name, "the original's part was upgraded to it")
+            assertEquals("minecraft:dirt", blockAt(out, 4, 19, 4).name)
+            assertEquals("minecraft:sandstone", blockAt(out, 4, 40, 4).name)
+        } finally {
+            world.close()
+        }
+    }
+
+    /** A 1.20.4 world in [tmp] with [chunks] in its region r.0.0. */
+    private fun world1204(tmp: Path, chunks: Map<ChunkPos, CompoundTag>): AnvilWorld {
+        RegionWriter.write(tmp.resolve("region").resolve(RegionFile.fileName(0, 0)), chunks.mapValues { RawChunk.of(it.value) })
+        tmp.resolve("level.dat").outputStream().use {
+            Nbt.writeGzip(it, CompoundTag().apply {
+                this["Data"] = CompoundTag().apply {
+                    putInt("version", WorldInfo.ANVIL)
+                    putInt("DataVersion", 3700)
+                    this["LevelName"] = StringTag("Two versions")
+                    this["Version"] = CompoundTag().apply { this["Name"] = StringTag("1.20.4") }
+                }
+            })
+        }
+        return AnvilWorld.open(tmp)
     }
 
     @Test
