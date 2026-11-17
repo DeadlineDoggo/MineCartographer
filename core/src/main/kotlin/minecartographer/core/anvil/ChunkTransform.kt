@@ -71,16 +71,21 @@ object ChunkTransform {
         val raw = source.readChunk(ref.pos)?.nbt() ?: return null
         val floor = ref.floor
         val below = if (floor != null) under?.readChunk(to)?.nbt() else null
-        val chunk = chunk(raw, ref.pos, below, to, ref.turns, ref.dy, floor, conversion)
+        // Chunks of one world can be of different versions too (Minecraft upgrades only the chunks it loads), so a
+        // world's own chunk laid over another of its chunks may need upgrading just like one from another world.
+        val conv = conversion ?: if (below != null && under != null) Conversion(source, under) else null
+        val chunk = chunk(raw, ref.pos, below, to, ref.turns, ref.dy, floor, conv)
         val outDv = chunk.int("DataVersion") ?: 0
         if (!withEntities || outDv < WorldExporter.DV_ENTITY_FILES) return chunk to null
-        // Entities of the source: from its entity files, or from inside its chunk when it was upgraded from before 1.17.
-        val sourceEntities = if ((source.dataVersion ?: 0) >= WorldExporter.DV_ENTITY_FILES) source.readEntities(ref.pos)?.nbt()
+        // Entities of the source: from its entity files, or from inside its chunk when it was saved before 1.17.
+        val sourceDv = raw.int("DataVersion") ?: 0
+        val sourceEntities = if (sourceDv >= WorldExporter.DV_ENTITY_FILES) source.readEntities(ref.pos)?.nbt()
             else (raw.compound("Level") ?: raw).list("Entities")?.let { CompoundTag().apply { this["Entities"] = it } }
         val belowEntities = if (floor != null) under?.readEntities(to)?.nbt() else null
-        val upgrade = conversion?.takeIf { it.fromDv < it.toDv && below != null }
+        val entitiesDv = sourceEntities?.int("DataVersion") ?: sourceDv
+        val upgrade = conv?.takeIf { below != null && entitiesDv < outDv }?.atVersions(entitiesDv, outDv)
         val entities = entities(sourceEntities, ref.pos, belowEntities, to, ref.turns, ref.dy, floor, outDv,
-            frames3d = (source.dataVersion ?: 0) >= SurfaceExtractor.DV_FLATTENING, convert = upgrade?.let { c -> c::upgradeEntity })
+            frames3d = sourceDv >= SurfaceExtractor.DV_FLATTENING, convert = upgrade?.let { c -> c::upgradeEntity })
         return chunk to entities
     }
 
@@ -99,7 +104,8 @@ object ChunkTransform {
         val sourceDv = source.int("DataVersion") ?: 0
         val underDv = under?.int("DataVersion") ?: 0
         val needsUpgrade = read != null && (read.format != src.format || sourceDv < underDv)
-        // Without a way to upgrade, chunks of two formats can't become one: the source then replaces the whole chunk.
+        // Without a way to upgrade, chunks of two versions can't become one: the original below is then left out.
+        // ([build] always passes a conversion when there is an original below.)
         val below = if (needsUpgrade && conversion == null) null else read
         val keepUnder = below != null
         val mode = when {
@@ -107,6 +113,8 @@ object ChunkTransform {
             conversion?.remaps == true -> Mode.REMAP
             else -> Mode.KEEP
         }
+        // Upgrades go from the source chunk's own version to the original chunk's, not by the worlds' level.dat.
+        val conv = if (mode == Mode.UPGRADE) conversion!!.atVersions(sourceDv, underDv) else conversion
         // The original chunk keeps what belongs to its place (structures, inhabited time); otherwise it's the source's.
         val root = copy(if (keepUnder) under!! else source) as CompoundTag
         val level = root.compound("Level") ?: root
@@ -136,10 +144,10 @@ object ChunkTransform {
         fun convert(entry: Any, sx: Int, sy: Int, sz: Int): Any {
             if (mode == Mode.KEEP) return entry
             if (mode == Mode.UPGRADE && entry is Int && (entry ushr 4) in BLOCKS_WITH_ENTITY) {
-                return conversion!!.upgradeEntry(entry, sourceBe[packPos(sx, sy, sz)])
+                return conv!!.upgradeEntry(entry, sourceBe[packPos(sx, sy, sz)])
             }
             val cache = if (entry is Int) convertedInts as MutableMap<Any, Any> else converted
-            return cache.getOrPut(entry) { if (mode == Mode.UPGRADE) conversion!!.upgradeEntry(entry, null) else conversion!!.remapEntry(entry) }
+            return cache.getOrPut(entry) { if (mode == Mode.UPGRADE) conv!!.upgradeEntry(entry, null) else conv!!.remapEntry(entry) }
         }
 
         // Blocks: from the source (turned back to where they came from) above the floor, the original below.
@@ -159,7 +167,7 @@ object ChunkTransform {
         // Biomes: per 4x4x4 cell or per column, whichever the format has.
         fun biome(lx: Int, y: Int, lz: Int): Any? {
             val (sx, sz) = unturn(t, lx, lz, 16)
-            val fromSource = src.biomeAt(sx, y - dy, sz)?.let { if (mode == Mode.UPGRADE) conversion!!.upgradeBiome(it) else it }
+            val fromSource = src.biomeAt(sx, y - dy, sz)?.let { if (mode == Mode.UPGRADE) conv!!.upgradeBiome(it) else it }
             val fromBelow = below?.biomeAt(lx, y, lz)
             return if (floor == null || y >= floor) fromSource ?: fromBelow else fromBelow ?: fromSource
         }
@@ -194,7 +202,7 @@ object ChunkTransform {
             if (floor != null && y < floor) continue
             if (y < out.minSection * 16 || y > out.maxSection * 16 + 15) continue
             // A block mapped to another loses its block entity: it belongs to a block the target doesn't have.
-            if (mode == Mode.REMAP && src.block(x - from.x * 16, sourceY, z - from.z * 16)?.let { conversion!!.isForeign(it) } == true) continue
+            if (mode == Mode.REMAP && src.block(x - from.x * 16, sourceY, z - from.z * 16)?.let { conv!!.isForeign(it) } == true) continue
             val (lx, lz) = turn(t, x - from.x * 16, z - from.z * 16, 16)
             var moved = copy(be) as CompoundTag
             moved.putInt("x", to.x * 16 + lx)
@@ -203,8 +211,8 @@ object ChunkTransform {
             // Heads on the floor before 1.13 keep their turn in the block entity.
             moved.int("Rot")?.let { if (t != 0) moved["Rot"] = ByteTag(((it + 4 * t) and 15).toByte()) }
             if (mode == Mode.UPGRADE) {
-                if (src.block(x - from.x * 16, sourceY, z - from.z * 16)?.let { conversion!!.isForeign(it) } == true) continue
-                moved = conversion!!.upgradeBlockEntity(moved) ?: continue
+                if (src.block(x - from.x * 16, sourceY, z - from.z * 16)?.let { conv!!.isForeign(it) } == true) continue
+                moved = conv!!.upgradeBlockEntity(moved) ?: continue
             }
             blockEntities += moved
         }
@@ -220,7 +228,7 @@ object ChunkTransform {
             for (e in sourceLevel.list("Entities")?.compounds().orEmpty()) {
                 var moved = copy(e) as CompoundTag
                 transformEntity(moved, from, to, t, dy, frames3d)
-                if (mode == Mode.UPGRADE) moved = conversion!!.upgradeEntity(moved) ?: continue
+                if (mode == Mode.UPGRADE) moved = conv!!.upgradeEntity(moved) ?: continue
                 val y = moved.list("Pos")?.doubles()?.getOrNull(1) ?: continue
                 if (floor == null || y >= floor) list += moved
             }

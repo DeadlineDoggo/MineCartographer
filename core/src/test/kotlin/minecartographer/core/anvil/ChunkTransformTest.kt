@@ -3,12 +3,17 @@ package minecartographer.core.anvil
 import minecartographer.core.BlockRotation
 import minecartographer.core.BlockState
 import minecartographer.core.ChunkPos
+import minecartographer.core.edit.ChunkRef
 import minecartographer.core.nbt.CompoundTag
+import minecartographer.core.nbt.Nbt
 import minecartographer.core.nbt.DoubleTag
 import minecartographer.core.nbt.FloatTag
 import minecartographer.core.nbt.ListTag
 import minecartographer.core.nbt.LongArrayTag
 import minecartographer.core.nbt.StringTag
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import kotlin.io.path.outputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -104,6 +109,44 @@ class ChunkTransformTest {
         assertEquals("minecraft:sandstone", blockAt(out, 4, 66, 4).name)
         assertEquals("minecraft:air", blockAt(out, 4, 67, 4).name, "the source ends at 63 + 3")
         assertEquals("minecraft:dirt", blockAt(out, 4, -60, 4).name)
+    }
+
+    @Test
+    fun `a world's own older chunk laid over a newer one keeps the original below and is upgraded`(@TempDir tmp: Path) {
+        // A world played in 1.20.1, then in 1.20.4: chunks not loaded since are still 1.20.1 (3465).
+        val older = ChunkPos(0, 0)
+        val newer = ChunkPos(1, 0)
+        val source = chunk(older) { _, y, _ ->
+            when {
+                y < 64 -> entry("minecraft:sandstone")
+                y == 64 -> entry("minecraft:grass") // short_grass since 1.20.3
+                else -> null
+            }
+        }
+        val under = chunk(newer) { _, y, _ -> if (y < 70) entry("minecraft:dirt") else null }.apply { putInt("DataVersion", 3700) }
+        RegionWriter.write(tmp.resolve("region").resolve(RegionFile.fileName(0, 0)), mapOf(older to RawChunk.of(source), newer to RawChunk.of(under)))
+        tmp.resolve("level.dat").outputStream().use {
+            Nbt.writeGzip(it, CompoundTag().apply {
+                this["Data"] = CompoundTag().apply {
+                    putInt("version", WorldInfo.ANVIL)
+                    putInt("DataVersion", 3700)
+                    this["LevelName"] = StringTag("Two versions")
+                    this["Version"] = CompoundTag().apply { this["Name"] = StringTag("1.20.4") }
+                }
+            })
+        }
+        val world = AnvilWorld.open(tmp)
+        try {
+            // Raised by 3 and cut at 66 over the newer chunk, as the export and the map build it.
+            val (out, _) = ChunkTransform.build(ChunkRef(world, older, dy = 3, cut = 66), newer, world)!!
+            assertEquals(3700, out.int("DataVersion"), "one chunk, of the newer version")
+            assertEquals("minecraft:dirt", blockAt(out, 4, 65, 4).name, "the original stays below the cut")
+            assertEquals("minecraft:dirt", blockAt(out, 4, -60, 4).name, "down to the bottom")
+            assertEquals("minecraft:sandstone", blockAt(out, 4, 66, 4).name)
+            assertEquals("minecraft:short_grass", blockAt(out, 4, 67, 4).name, "upgraded from the chunk's own version, not level.dat's")
+        } finally {
+            world.close()
+        }
     }
 
     @Test

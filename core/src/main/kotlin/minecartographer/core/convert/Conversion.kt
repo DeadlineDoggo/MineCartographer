@@ -13,9 +13,21 @@ import minecartographer.core.nbt.StringTag
  * ([overrides] by the user, otherwise [ModdedRemap]), and, for chunks merged into one of the target's (raised or cut),
  * blocks, biomes, block entities and entities are upgraded to the target's version ([Upgrade]).
  */
-class Conversion(val source: AnvilWorld, val target: AnvilWorld, val overrides: Map<String, String> = emptyMap()) {
-    val fromDv = source.dataVersion ?: 0
-    val toDv = target.dataVersion ?: 0
+class Conversion(
+    val source: AnvilWorld,
+    val target: AnvilWorld,
+    val overrides: Map<String, String> = emptyMap(),
+    /** The version upgrades start from: the source world's, or that of the chunk being converted (see [atVersions]). */
+    val fromDv: Int = source.dataVersion ?: 0,
+    val toDv: Int = target.dataVersion ?: 0,
+) {
+    /**
+     * The same conversion for one chunk saved at [fromDv] going into one saved at [toDv]. A world's chunks keep the
+     * version they were last loaded in, so they can be older than level.dat says, also within the same world.
+     */
+    fun atVersions(fromDv: Int, toDv: Int): Conversion =
+        if (fromDv == this.fromDv && toDv == this.toDv) this else Conversion(source, target, overrides, fromDv, toDv)
+
     private val sourceLegacy = ChunkTransform.formatOf(source.dataVersion) == ChunkTransform.Format.LEGACY
     private val targetLegacy = ChunkTransform.formatOf(target.dataVersion) == ChunkTransform.Format.LEGACY
 
