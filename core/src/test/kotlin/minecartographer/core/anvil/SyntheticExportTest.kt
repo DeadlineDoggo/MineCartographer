@@ -6,6 +6,7 @@ import minecartographer.core.edit.ChunkEdit
 import minecartographer.core.edit.ChunkRef
 import minecartographer.core.edit.LayerStack
 import minecartographer.core.nbt.CompoundTag
+import minecartographer.core.nbt.DoubleTag
 import minecartographer.core.nbt.IntArrayTag
 import minecartographer.core.nbt.ListTag
 import minecartographer.core.nbt.Nbt
@@ -22,8 +23,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** Exports of a world with a broken chunk, and exports that fail half way. */
-class ExportFailureTest {
+/** Exports of small worlds made here: a broken chunk, a failed export, points of interest, entity UUIDs. */
+class SyntheticExportTest {
     private val good = ChunkPos(0, 0)
     private val broken = ChunkPos(1, 0)
 
@@ -120,6 +121,44 @@ class ExportFailureTest {
                     putInt("free_tickets", 1)
                 }))
             }
+        }
+    }
+
+    /** The world of [world] with a cow at [good] in its entity files, UUID 1 2 3 4. */
+    private fun worldWithCow(folder: Path): AnvilWorld {
+        RegionWriter.write(folder.resolve("entities").resolve(RegionFile.fileName(0, 0)), mapOf(good to RawChunk.of(CompoundTag().apply {
+            putInt("DataVersion", 3700)
+            this["Position"] = IntArrayTag(intArrayOf(good.x, good.z))
+            this["Entities"] = ListTag(10, mutableListOf(CompoundTag().apply {
+                this["id"] = StringTag("minecraft:cow")
+                this["Pos"] = ListTag(6, mutableListOf(DoubleTag(3.5), DoubleTag(70.0), DoubleTag(3.5)))
+                this["UUID"] = IntArrayTag(intArrayOf(1, 2, 3, 4))
+            }))
+        })))
+        return world(folder)
+    }
+
+    private fun cowId(world: AnvilWorld, pos: ChunkPos) =
+        world.readEntities(pos)!!.nbt().list("Entities")!!.compound(0).intArray("UUID")!!.toList()
+
+    @Test
+    fun `a chunk only moved keeps its entities' UUIDs, a copy gets new ones`(@TempDir tmp: Path) {
+        val world = worldWithCow(tmp.resolve("world").also(Files::createDirectories))
+        val to = ChunkPos(3, 0)
+        val moved = LayerStack.of(world).update(BaseLayer.BASE_ID) { (it as BaseLayer).withOverrides(mapOf(good to ChunkEdit.Delete)) }
+            .addLayer("pasted", mapOf(to to ChunkRef(world, good)))
+        WorldExporter.export(moved, tmp.resolve("moved"), "Moved")
+        val copied = LayerStack.of(world).addLayer("pasted", mapOf(to to ChunkRef(world, good)))
+        WorldExporter.export(copied, tmp.resolve("copied"), "Copied")
+
+        val a = AnvilWorld.open(tmp.resolve("moved"))
+        val b = AnvilWorld.open(tmp.resolve("copied"))
+        try {
+            assertEquals(listOf(1, 2, 3, 4), cowId(a, to), "moved")
+            assertEquals(listOf(1, 2, 3, 4), cowId(b, good), "the original stays as it was")
+            assertTrue(cowId(b, to) != listOf(1, 2, 3, 4), "the copy differs")
+        } finally {
+            a.close(); b.close(); world.close()
         }
     }
 

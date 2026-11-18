@@ -8,6 +8,7 @@ import minecartographer.core.nbt.CompoundTag
 import minecartographer.core.nbt.Nbt
 import minecartographer.core.nbt.DoubleTag
 import minecartographer.core.nbt.FloatTag
+import minecartographer.core.nbt.IntArrayTag
 import minecartographer.core.nbt.ListTag
 import minecartographer.core.nbt.LongArrayTag
 import minecartographer.core.nbt.StringTag
@@ -201,6 +202,60 @@ class ChunkTransformTest {
         val e = moved.list("Entities")!!.compound(0)
         assertEquals(listOf(to.x * 16 + 13.5, 75.0, to.z * 16 + 1.5), e.list("Pos")!!.doubles())
         assertEquals(90.0, e.list("Rotation")!!.doubles()[0], 1e-6)
+    }
+
+    @Test
+    fun `what an entity hangs on or is tied to moves with it, and what it remembers elsewhere is forgotten`() {
+        val block = intArrayOf(from.x * 16 + 1, 70, from.z * 16 + 2)
+        val movedBlock = listOf(to.x * 16 + 13, 75, to.z * 16 + 1) // turned once, raised by 5
+        val frame = CompoundTag().apply {
+            this["id"] = StringTag("minecraft:item_frame")
+            this["Pos"] = ListTag(6, mutableListOf(DoubleTag(block[0] + 0.5), DoubleTag(70.5), DoubleTag(block[2] + 0.97)))
+            this["block_pos"] = IntArrayTag(block.copyOf())
+        }
+        val dog = CompoundTag().apply {
+            this["id"] = StringTag("minecraft:wolf")
+            this["Pos"] = ListTag(6, mutableListOf(DoubleTag(block[0] + 0.5), DoubleTag(70.0), DoubleTag(block[2] + 0.5)))
+            this["leash"] = IntArrayTag(block.copyOf())
+            this["UUID"] = IntArrayTag(intArrayOf(1, 2, 3, 4))
+        }
+        val oldDog = CompoundTag().apply {
+            this["id"] = StringTag("Wolf")
+            this["Pos"] = ListTag(6, mutableListOf(DoubleTag(block[0] + 0.5), DoubleTag(70.0), DoubleTag(block[2] + 0.5)))
+            this["Leash"] = CompoundTag().apply { putInt("X", block[0]); putInt("Y", block[1]); putInt("Z", block[2]) }
+        }
+        val villager = CompoundTag().apply {
+            this["id"] = StringTag("minecraft:villager")
+            this["Pos"] = ListTag(6, mutableListOf(DoubleTag(block[0] + 0.5), DoubleTag(70.0), DoubleTag(block[2] + 0.5)))
+            putInt("SleepingX", block[0]); putInt("SleepingY", block[1]); putInt("SleepingZ", block[2])
+            this["Brain"] = CompoundTag().apply {
+                this["memories"] = CompoundTag().apply {
+                    this["minecraft:home"] = CompoundTag()
+                    this["minecraft:job_site"] = CompoundTag()
+                    this["minecraft:last_slept"] = CompoundTag()
+                }
+            }
+        }
+        val bee = CompoundTag().apply {
+            this["id"] = StringTag("minecraft:bee")
+            this["Pos"] = ListTag(6, mutableListOf(DoubleTag(block[0] + 0.5), DoubleTag(72.0), DoubleTag(block[2] + 0.5)))
+            this["hive_pos"] = IntArrayTag(block.copyOf())
+        }
+        val entities = CompoundTag().apply { this["Entities"] = ListTag(10, mutableListOf(frame, dog, oldDog, villager, bee)) }
+
+        val moved = ChunkTransform.entities(entities, from, null, to, turns = 1, dy = 5, floor = null, dataVersion = 4325, newIds = false)!!
+            .list("Entities")!!.compounds()
+        assertEquals(movedBlock, moved[0].intArray("block_pos")!!.toList(), "a frame hangs on the block it hung on")
+        assertEquals(movedBlock, moved[1].intArray("leash")!!.toList(), "a lead stays tied to its fence")
+        assertEquals(listOf(1, 2, 3, 4), moved[1].intArray("UUID")!!.toList(), "a chunk only moved keeps its UUIDs")
+        val leash = moved[2].compound("Leash")!!
+        assertEquals(movedBlock, listOf(leash.int("X"), leash.int("Y"), leash.int("Z")))
+        assertNull(moved[3].int("SleepingX"))
+        assertEquals(setOf("minecraft:last_slept"), moved[3].compound("Brain")!!.compound("memories")!!.entries.keys)
+        assertNull(moved[4]["hive_pos"])
+
+        val copied = ChunkTransform.entities(entities, from, null, to, turns = 1, dy = 5, floor = null, dataVersion = 4325, newIds = true)!!
+        assertTrue(copied.list("Entities")!!.compound(1).intArray("UUID")!!.toList() != listOf(1, 2, 3, 4), "a copy gets new ones")
     }
 
     @Test

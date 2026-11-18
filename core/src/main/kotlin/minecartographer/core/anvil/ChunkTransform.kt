@@ -64,9 +64,10 @@ object ChunkTransform {
     /**
      * [ref]'s chunk and entity chunk (1.17+ entity files; null where entities are in the chunk) as stored at [to],
      * over the chunk of [under] (the original world) there, converted by [conversion] for the target world.
-     * Null when the source chunk can't be read.
+     * Null when the source chunk can't be read. [newIds] gives the entities new UUIDs, for a chunk exported more than once.
      */
-    fun build(ref: ChunkRef, to: ChunkPos, under: AnvilWorld?, conversion: Conversion? = null, withEntities: Boolean = true): Pair<CompoundTag, CompoundTag?>? {
+    fun build(ref: ChunkRef, to: ChunkPos, under: AnvilWorld?, conversion: Conversion? = null, withEntities: Boolean = true,
+              newIds: Boolean = true): Pair<CompoundTag, CompoundTag?>? {
         val source = ref.world as? AnvilWorld ?: return null
         val raw = source.readChunk(ref.pos)?.nbt() ?: return null
         val floor = ref.floor
@@ -76,7 +77,7 @@ object ChunkTransform {
         val conv = conversion ?: if (below != null && under != null) Conversion(source, under) else null
         // The original chunk can be the older one too; its own part is then upgraded to the source's version.
         val underConv = if (below != null && under != null) Conversion(under, under) else null
-        val chunk = chunk(raw, ref.pos, below, to, ref.turns, ref.dy, floor, conv, underConv)
+        val chunk = chunk(raw, ref.pos, below, to, ref.turns, ref.dy, floor, conv, underConv, newIds)
         val outDv = chunk.int("DataVersion") ?: 0
         if (!withEntities || outDv < WorldExporter.DV_ENTITY_FILES) return chunk to null
         // Entities of the source: from its entity files, or from inside its chunk when it was saved before 1.17.
@@ -90,7 +91,7 @@ object ChunkTransform {
         val upgradeBelow = underConv?.takeIf { belowEntitiesDv < outDv }?.atVersions(belowEntitiesDv, outDv)
         val entities = entities(sourceEntities, ref.pos, belowEntities, to, ref.turns, ref.dy, floor, outDv,
             frames3d = sourceDv >= SurfaceExtractor.DV_FLATTENING, convert = upgrade?.let { c -> c::upgradeEntity },
-            convertUnder = upgradeBelow?.let { c -> c::upgradeEntity })
+            convertUnder = upgradeBelow?.let { c -> c::upgradeEntity }, newIds = newIds)
         return chunk to entities
     }
 
@@ -102,7 +103,7 @@ object ChunkTransform {
      * keeps its own version (Minecraft upgrades it), with foreign blocks mapped by [conversion]. Neither input is changed.
      */
     fun chunk(source: CompoundTag, from: ChunkPos, under: CompoundTag?, to: ChunkPos, turns: Int, dy: Int, floor: Int?,
-              conversion: Conversion? = null, underConversion: Conversion? = null): CompoundTag {
+              conversion: Conversion? = null, underConversion: Conversion? = null, newIds: Boolean = true): CompoundTag {
         val t = Rotation.normalize(turns)
         val src = Volume.read(source)
         val read = if (floor != null) under?.let(Volume::read) else null
@@ -243,7 +244,7 @@ object ChunkTransform {
             val list = ListTag(10)
             for (e in sourceLevel.list("Entities")?.compounds().orEmpty()) {
                 var moved = copy(e) as CompoundTag
-                transformEntity(moved, from, to, t, dy, frames3d)
+                transformEntity(moved, from, to, t, dy, frames3d, newIds)
                 if (mode == Mode.UPGRADE) moved = conv!!.upgradeEntity(moved) ?: continue
                 val y = moved.list("Pos")?.doubles()?.getOrNull(1) ?: continue
                 if (floor == null || y >= floor) list += moved
@@ -296,12 +297,12 @@ object ChunkTransform {
      */
     fun entities(source: CompoundTag?, from: ChunkPos, under: CompoundTag?, to: ChunkPos, turns: Int, dy: Int, floor: Int?, dataVersion: Int,
                  frames3d: Boolean = true, convert: ((CompoundTag) -> CompoundTag?)? = null,
-                 convertUnder: ((CompoundTag) -> CompoundTag?)? = null): CompoundTag? {
+                 convertUnder: ((CompoundTag) -> CompoundTag?)? = null, newIds: Boolean = true): CompoundTag? {
         val t = Rotation.normalize(turns)
         val list = ListTag(10)
         for (e in source?.list("Entities")?.compounds().orEmpty()) {
             var moved = copy(e) as CompoundTag
-            transformEntity(moved, from, to, t, dy, frames3d)
+            transformEntity(moved, from, to, t, dy, frames3d, newIds)
             if (convert != null) moved = convert(moved) ?: continue
             val y = moved.list("Pos")?.doubles()?.getOrNull(1) ?: continue
             if (floor == null || y >= floor) list += moved
@@ -320,7 +321,28 @@ object ChunkTransform {
         }
     }
 
-    private fun transformEntity(e: CompoundTag, from: ChunkPos, to: ChunkPos, t: Int, dy: Int, frames3d: Boolean) {
+    /**
+     * Moves entity [e] from chunk [from] to [to], turned [t] times clockwise and raised by [dy]: its position, motion,
+     * facing, the block it hangs on and the fence its lead is tied to. Positions it remembers elsewhere (a villager's
+     * bed and job site, a bee's hive) are forgotten: those blocks may not have come along, and the game finds new
+     * ones. [newIds] gives it a new UUID, so copies of one chunk don't share them (the game drops all but one).
+     */
+    internal fun transformEntity(e: CompoundTag, from: ChunkPos, to: ChunkPos, t: Int, dy: Int, frames3d: Boolean, newIds: Boolean = true) {
+        fun move(x: Int, y: Int, z: Int): IntArray {
+            val (lx, lz) = turn(t, x - from.x * 16, z - from.z * 16, 16)
+            return intArrayOf(to.x * 16 + lx, y + dy, to.z * 16 + lz)
+        }
+        fun moveArray(key: String) {
+            val p = e.intArray(key)?.takeIf { it.size == 3 } ?: return
+            e[key] = IntArrayTag(move(p[0], p[1], p[2]))
+        }
+        fun moveInts(target: CompoundTag, x: String, y: String, z: String) {
+            val px = target.int(x) ?: return
+            val py = target.int(y) ?: return
+            val pz = target.int(z) ?: return
+            val (nx, ny, nz) = move(px, py, pz)
+            target.putInt(x, nx); target.putInt(y, ny); target.putInt(z, nz)
+        }
         e.list("Pos")?.let { pos ->
             if (pos.size == 3) {
                 val (x, y, z) = pos.doubles()
@@ -351,14 +373,13 @@ object ChunkTransform {
             }
         }
         // Hanging entities (item frames, paintings) store the block they hang on, and which way they face.
-        val tx = e.int("TileX")
-        val tz = e.int("TileZ")
-        if (tx != null && tz != null) {
-            val (lx, lz) = turn(t, tx - from.x * 16, tz - from.z * 16, 16)
-            e.putInt("TileX", to.x * 16 + lx)
-            e.putInt("TileZ", to.z * 16 + lz)
-            e.int("TileY")?.let { e.putInt("TileY", it + dy) }
-        }
+        moveInts(e, "TileX", "TileY", "TileZ")
+        moveArray("block_pos") // 1.21.5+
+        // Turtles go back to the beach they hatched on; it came along with them.
+        moveInts(e, "HomePosX", "HomePosY", "HomePosZ")
+        moveInts(e, "TravelPosX", "TravelPosY", "TravelPosZ")
+        moveArray("home_pos")
+        moveArray("travel_pos")
         // Since 1.13 item frames face any of 6 directions; everything else (and older frames) one of 4.
         val frame = frames3d && e.string("id")?.contains("item_frame") == true
         for (key in listOf("Facing", "facing", "Direction")) {
@@ -367,20 +388,35 @@ object ChunkTransform {
         }
         // Before 1.8 paintings also store "Dir", Direction with north and south swapped.
         e.int("Direction")?.let { d -> if ("Dir" in e) e["Dir"] = ByteTag(when (d) { 0 -> 2; 2 -> 0; else -> d }.toByte()) }
-        e.remove("leash")
-        e.remove("Leash")
+        // A lead tied to a fence moves with it; one held by another entity holds on only while the UUIDs stay.
+        e.compound("Leash")?.let { leash ->
+            if ("X" in leash) moveInts(leash, "X", "Y", "Z") else if (newIds) e.remove("Leash")
+        }
+        when (e["leash"]) {
+            is IntArrayTag -> moveArray("leash")
+            is CompoundTag -> if (newIds) e.remove("leash")
+            else -> {}
+        }
+        for (key in FORGOTTEN_POSITIONS) e.remove(key)
+        e.compound("Brain")?.compound("memories")?.let { memories -> FORGOTTEN_MEMORIES.forEach { memories.remove(it) } }
         val id = UUID.randomUUID()
-        if ("UUID" in e) {
+        if (newIds && "UUID" in e) {
             val m = id.mostSignificantBits
             val l = id.leastSignificantBits
             e["UUID"] = IntArrayTag(intArrayOf((m shr 32).toInt(), m.toInt(), (l shr 32).toInt(), l.toInt()))
         }
-        if ("UUIDMost" in e) {
+        if (newIds && "UUIDMost" in e) {
             e["UUIDMost"] = LongTag(id.mostSignificantBits)
             e["UUIDLeast"] = LongTag(id.leastSignificantBits)
         }
-        e.list("Passengers")?.compounds()?.forEach { transformEntity(it, from, to, t, dy, frames3d) }
+        e.list("Passengers")?.compounds()?.forEach { transformEntity(it, from, to, t, dy, frames3d, newIds) }
     }
+
+    /** Blocks an entity remembers that need not have moved with it: a sleeping villager's bed, a bee's hive and flower. */
+    private val FORGOTTEN_POSITIONS = listOf("SleepingX", "SleepingY", "SleepingZ", "sleeping_pos", "HivePos", "FlowerPos", "hive_pos", "flower_pos")
+
+    /** A villager's bed, job site and bell (with the dimension, as positions). */
+    private val FORGOTTEN_MEMORIES = listOf("minecraft:home", "minecraft:job_site", "minecraft:potential_job_site", "minecraft:meeting_point")
 
     /** Item frame facing (0 down, 1 up, 2 north, 3 south, 4 west, 5 east) turned clockwise. */
     private fun turnFacing3d(f: Int, t: Int): Byte {

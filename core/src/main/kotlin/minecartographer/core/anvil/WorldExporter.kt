@@ -1,13 +1,12 @@
 package minecartographer.core.anvil
 
 import minecartographer.core.ChunkPos
+import minecartographer.core.WorldSource
 import minecartographer.core.convert.Conversion
 import minecartographer.core.convert.Upgrade
 import minecartographer.core.edit.LayerStack
 import minecartographer.core.nbt.CompoundTag
-import minecartographer.core.nbt.DoubleTag
 import minecartographer.core.nbt.IntArrayTag
-import minecartographer.core.nbt.LongTag
 import minecartographer.core.nbt.Nbt
 import minecartographer.core.nbt.StringTag
 import java.io.IOException
@@ -17,7 +16,6 @@ import java.nio.file.Path
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
-import java.util.UUID
 import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
 import kotlin.io.path.listDirectoryEntries
@@ -127,6 +125,10 @@ object WorldExporter {
         stack.layers.forEach { if (it is minecartographer.core.edit.ChunkLayer && it.visible) positions += it.chunks.keys }
         stack.base.overrides.keys.forEach { positions += it }
         val byRegion = positions.groupBy { it.regionX to it.regionZ }
+        // A chunk shown in more than one place (pasted copies, or a copy next to the original) gets new entity UUIDs
+        // where it is moved; one only moved keeps them, so what refers to its entities still finds them.
+        val uses = HashMap<Pair<WorldSource, ChunkPos>, Int>()
+        for (pos in positions) stack.resolve(pos)?.let { uses.merge(it.world to it.pos, 1, Int::plus) }
 
         val conversions = HashMap<Pair<AnvilWorld, Map<String, String>>, Conversion>()
         var done = 0
@@ -144,6 +146,7 @@ object WorldExporter {
                 // A chunk that can't be read (truncated file, bad compression, broken NBT) is left out with a warning.
                 try {
                     val source = ref.world as AnvilWorld
+                    val newIds = (uses[ref.world to ref.pos] ?: 0) > 1
                     val layer = stack.layerAt(pos)
                     val conversion = if (source == base) null else conversions.getOrPut(source to layer?.blockMap.orEmpty()) {
                         Conversion(source, base, layer?.blockMap.orEmpty())
@@ -151,7 +154,7 @@ object WorldExporter {
                     if (ref.transformed || conversion?.remaps == true) {
                         // The original chunk here shows below a raised or cut one, unless it was erased.
                         val under = base.takeIf { !stack.base.isErased(pos) }
-                        val built = ChunkTransform.build(ref, pos, under, conversion)
+                        val built = ChunkTransform.build(ref, pos, under, conversion, newIds = newIds)
                         if (built == null) {
                             warnings += "Chunk ${ref.pos} of ${source.name} could not be read"
                             continue
@@ -173,12 +176,12 @@ object WorldExporter {
                         unchanged++
                     } else {
                         val nbt = raw.nbt()
-                        relocateChunk(nbt, ref.pos, pos)
+                        relocateChunk(nbt, ref.pos, pos, newIds)
                         blockData[pos] = RawChunk.of(nbt)
                         if ((source.dataVersion ?: 0) >= DV_ENTITY_FILES) {
                             source.readEntities(ref.pos)?.let { entities ->
                                 val e = entities.nbt()
-                                relocateEntityChunk(e, ref.pos, pos)
+                                relocateEntityChunk(e, ref.pos, pos, newIds)
                                 entityData[pos] = RawChunk.of(e)
                             }
                         }
@@ -215,7 +218,7 @@ object WorldExporter {
     }
 
     /** Moves chunk NBT (any version) from [from] to [to]: coordinates, block entities, ticks, entities. */
-    fun relocateChunk(root: CompoundTag, from: ChunkPos, to: ChunkPos) {
+    fun relocateChunk(root: CompoundTag, from: ChunkPos, to: ChunkPos, newIds: Boolean = true) {
         val c = root.compound("Level") ?: root
         val dx = (to.x - from.x) * 16
         val dz = (to.z - from.z) * 16
@@ -224,7 +227,7 @@ object WorldExporter {
         for (name in listOf("TileEntities", "block_entities", "TileTicks", "LiquidTicks", "block_ticks", "fluid_ticks")) {
             c.list(name)?.compounds()?.forEach { shiftXZ(it, dx, dz) }
         }
-        c.list("Entities")?.compounds()?.forEach { relocateEntity(it, dx, dz) } // before 1.17
+        c.list("Entities")?.compounds()?.forEach { ChunkTransform.transformEntity(it, from, to, 0, 0, frames3d = true, newIds) } // before 1.17
         // Structure pieces point at their original location; drop them rather than leave broken references.
         for (name in listOf("Structures", "structures")) {
             c.compound(name)?.let {
@@ -239,41 +242,14 @@ object WorldExporter {
     }
 
     /** 1.17+ entity chunk: `Position` plus the entity list. */
-    fun relocateEntityChunk(root: CompoundTag, from: ChunkPos, to: ChunkPos) {
+    fun relocateEntityChunk(root: CompoundTag, from: ChunkPos, to: ChunkPos, newIds: Boolean = true) {
         root["Position"] = IntArrayTag(intArrayOf(to.x, to.z))
-        root.list("Entities")?.compounds()?.forEach { relocateEntity(it, (to.x - from.x) * 16, (to.z - from.z) * 16) }
+        root.list("Entities")?.compounds()?.forEach { ChunkTransform.transformEntity(it, from, to, 0, 0, frames3d = true, newIds) }
     }
 
     private fun shiftXZ(tag: CompoundTag, dx: Int, dz: Int) {
         tag.int("x")?.let { tag.putInt("x", it + dx) }
         tag.int("z")?.let { tag.putInt("z", it + dz) }
-    }
-
-    private fun relocateEntity(e: CompoundTag, dx: Int, dz: Int) {
-        e.list("Pos")?.let { pos ->
-            if (pos.size == 3) {
-                val (x, y, z) = pos.doubles()
-                pos.clear()
-                pos.addAll(listOf(DoubleTag(x + dx), DoubleTag(y), DoubleTag(z + dz)))
-                pos.elementType = 6
-            }
-        }
-        // Hanging entities (paintings, item frames) store the block they hang on.
-        e.int("TileX")?.let { e.putInt("TileX", it + dx) }
-        e.int("TileZ")?.let { e.putInt("TileZ", it + dz) }
-        e.compound("Leash")?.let { leash -> leash.int("X")?.let { leash.putInt("X", it + dx) }; leash.int("Z")?.let { leash.putInt("Z", it + dz) } }
-        // Copies of the same chunk must not share entity UUIDs.
-        val id = UUID.randomUUID()
-        if ("UUID" in e) {
-            val m = id.mostSignificantBits
-            val l = id.leastSignificantBits
-            e["UUID"] = IntArrayTag(intArrayOf((m shr 32).toInt(), m.toInt(), (l shr 32).toInt(), l.toInt()))
-        }
-        if ("UUIDMost" in e) {
-            e["UUIDMost"] = LongTag(id.mostSignificantBits)
-            e["UUIDLeast"] = LongTag(id.leastSignificantBits)
-        }
-        e.list("Passengers")?.compounds()?.forEach { relocateEntity(it, dx, dz) }
     }
 
     private fun deleteTree(path: Path) {
