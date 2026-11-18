@@ -164,6 +164,9 @@ object ChunkTransform {
         }
 
         val upgradedBelow = java.util.IdentityHashMap<Any, Any>()
+        // Turned once per palette entry too: turning makes a new entry, which the identity cache above wouldn't know.
+        val turnedEntries = java.util.IdentityHashMap<Any, Any>()
+        fun turnedEntry(entry: Any): Any = if (t == 0 || entry is Int) turned(entry, t) else turnedEntries.getOrPut(entry) { turned(entry, t) }
 
         // Blocks: from the source (turned back to where they came from) above the floor, the original below.
         for (sy in out.minSection..out.maxSection) for (i in 0 until 4096) {
@@ -172,7 +175,7 @@ object ChunkTransform {
             val y = sy * 16 + (i shr 8)
             val entry = if (floor == null || y >= floor) {
                 val (sx, sz) = unturn(t, lx, lz, 16)
-                src.block(sx, y - dy, sz)?.let { convert(turned(it, t), sx, y - dy, sz) }
+                src.block(sx, y - dy, sz)?.let { convert(turnedEntry(it), sx, y - dy, sz) }
             } else {
                 below?.block(lx, y, lz)?.let { if (belowConv == null) it else upgradedBelow.getOrPut(it) { belowConv.upgradeEntry(it, null) } }
             }
