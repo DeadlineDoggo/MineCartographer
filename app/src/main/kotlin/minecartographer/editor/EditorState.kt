@@ -370,12 +370,19 @@ class EditorState {
     private fun loadMarkers(world: WorldSource) {
         if (world !is AnvilWorld) return
         scope.launch(Dispatchers.IO) {
-            val found = runCatching { MarkerReader.read(world.folder, world.name) }.getOrDefault(emptyList())
-            // Without the game folder the mods' files can't be seen, so a missing waypoint proves nothing: leave the changes alone.
-            val modFilesVisible = MarkerReader.gameFolder(world.folder) != null
+            val read = runCatching { MarkerReader.readAll(world.folder, world.name) }.getOrNull()
+            val found = read?.markers.orEmpty()
+            // Without the game folder the mods' files can't be seen, and with one of them unreadable its waypoints are
+            // missing: either way a missing waypoint proves nothing, so the changes are left alone.
+            val modFilesVisible = MarkerReader.gameFolder(world.folder) != null && read?.complete == true
+            read?.unreadable?.forEach { System.err.println("Could not read waypoints from $it") }
             withContext(Dispatchers.Main) {
                 if (worlds.none { it.id == world.id }) return@withContext
                 if (found.isNotEmpty()) markers[world.id] = found
+                if (read == null || !read.complete) {
+                    val what = read?.unreadable?.size?.let { "$it waypoint file${if (it == 1) "" else "s"}" } ?: "the waypoints"
+                    notify("Could not read $what of \"${world.name}\"; your waypoint changes are kept as they are", warning = true)
+                }
                 if (modFilesVisible) waypointOverlays[world.id]?.let { overlay ->
                     val checked = overlay.reconcile(found)
                     if (checked !== overlay) {

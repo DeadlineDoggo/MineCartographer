@@ -12,7 +12,6 @@ import kotlin.io.path.inputStream
 import kotlin.io.path.isDirectory
 import kotlin.io.path.listDirectoryEntries
 import kotlin.io.path.name
-import kotlin.io.path.readText
 
 enum class MarkerKind(val label: String) {
     /** A waypoint made in a minimap mod. */
@@ -48,13 +47,40 @@ object MarkerReader {
     const val XAERO = "Xaero's Minimap"
     const val JOURNEYMAP = "JourneyMap"
 
-    fun read(world: Path, levelName: String? = null): List<Marker> = buildList {
-        runCatching { addAll(banners(world)) }
-        val game = gameFolder(world)
-        if (game != null) {
-            runCatching { addAll(xaero(game, world.name)) }
-            runCatching { addAll(journeyMap(game, listOfNotNull(world.name, levelName))) }
+    fun read(world: Path, levelName: String? = null): List<Marker> = readAll(world, levelName).markers
+
+    /**
+     * What [readAll] found. [unreadable] are the mods' files or folders that couldn't be read (locked by the game, cut
+     * short while it wrote them...): their waypoints are missing from [markers] but may well still exist.
+     */
+    class Found(val markers: List<Marker>, val unreadable: List<Path>) {
+        /** Every waypoint file was read, so a waypoint missing from [markers] is really gone from the mod. */
+        val complete: Boolean get() = unreadable.isEmpty()
+    }
+
+    /** The banners and waypoints of [world]; a file that can't be read is left out and listed, the others still count. */
+    fun readAll(world: Path, levelName: String? = null): Found {
+        val unreadable = ArrayList<Path>()
+        val markers = buildList {
+            runCatching { addAll(banners(world)) } // banners have no edits that depend on them
+            val game = gameFolder(world)
+            if (game != null) {
+                runCatching { addAll(xaero(game, world.name, unreadable::add)) }.onFailure { unreadable.add(game.resolve("xaero")) }
+                runCatching { addAll(journeyMap(game, listOfNotNull(world.name, levelName), unreadable::add)) }
+                    .onFailure { unreadable.add(game.resolve("journeymap")) }
+            }
         }
+        return Found(markers, unreadable)
+    }
+
+    /**
+     * A text file as UTF-8, with bytes that aren't UTF-8 replaced (older files may be in the system's encoding, and one
+     * odd letter in a name must not cost the whole file). Null when the file can't be read at all.
+     */
+    private fun text(file: Path): String? = try {
+        String(Files.readAllBytes(file), Charsets.UTF_8)
+    } catch (e: java.io.IOException) {
+        null
     }
 
     /** The game folder when the world is in its `saves` folder (that is where the mods keep their files), else null. */
@@ -130,13 +156,14 @@ object MarkerReader {
     private val CHAT get() = MinecraftColors.CHAT
 
     /** Files `waypoint:name:initials:x:y:z:color:disabled:type:set...` of the overworld folder `dim%0`; `~` for a height means none. */
-    fun xaero(game: Path, worldFolder: String): List<Marker> {
+    fun xaero(game: Path, worldFolder: String, unreadable: (Path) -> Unit = {}): List<Marker> {
         val result = ArrayList<Marker>()
         for (root in listOf("XaeroWaypoints", "xaero/minimap")) for (folder in listOf(xaeroFolder(worldFolder), worldFolder).distinct()) {
             val dir = game.resolve(root).resolve(folder).resolve("dim%0")
             if (!dir.isDirectory()) continue
             for (file in dir.listDirectoryEntries("*.txt").sortedBy { it.name }) {
-                for (line in Files.readAllLines(file)) result += xaeroLine(line, file.name) ?: continue
+                val text = text(file) ?: run { unreadable(file); null } ?: continue
+                for (line in text.lines()) result += xaeroLine(line, file.name) ?: continue
             }
         }
         return result.distinct()
@@ -161,7 +188,7 @@ object MarkerReader {
     // ---- JourneyMap ----
 
     /** the json files in `journeymap/data/sp/<world>/waypoints`, in the folder named like the save or the world. */
-    fun journeyMap(game: Path, names: List<String>): List<Marker> {
+    fun journeyMap(game: Path, names: List<String>, unreadable: (Path) -> Unit = {}): List<Marker> {
         val sp = game.resolve("journeymap/data/sp")
         if (!sp.isDirectory()) return emptyList()
         val wanted = names.map { it.lowercase() }
@@ -170,7 +197,13 @@ object MarkerReader {
             val dir = world.resolve("waypoints")
             if (!dir.exists()) continue
             for (file in dir.listDirectoryEntries("*.json").filter { it.extension == "json" }) {
-                result += journeyMapFile(file.readText(), file.name, runCatching { Files.getLastModifiedTime(file).toMillis() }.getOrNull()) ?: continue
+                // A file that isn't JSON is one JourneyMap is writing, or a broken one: not a deleted waypoint.
+                val doc = text(file)?.let { runCatching { Json.parse(it) }.getOrNull() as? Map<*, *> }
+                if (doc == null) {
+                    unreadable(file)
+                    continue
+                }
+                result += journeyMapWaypoint(doc, file.name, runCatching { Files.getLastModifiedTime(file).toMillis() }.getOrNull()) ?: continue
             }
         }
         return result
@@ -180,8 +213,10 @@ object MarkerReader {
      * One JourneyMap waypoint file, read as JSON (JourneyMap writes it with Gson, which escapes `'`, `<`, `>`, `&` and
      * `=` as `\u0027`...). Null for a file that isn't one, a switched-off waypoint or one of another dimension.
      */
-    internal fun journeyMapFile(json: String, file: String = "", modifiedMillis: Long? = null): Marker? {
-        val doc = runCatching { Json.parse(json) }.getOrNull() as? Map<*, *> ?: return null
+    internal fun journeyMapFile(json: String, file: String = "", modifiedMillis: Long? = null): Marker? =
+        (runCatching { Json.parse(json) }.getOrNull() as? Map<*, *>)?.let { journeyMapWaypoint(it, file, modifiedMillis) }
+
+    private fun journeyMapWaypoint(doc: Map<*, *>, file: String, modifiedMillis: Long?): Marker? {
         fun number(key: String) = (doc[key] as? Double)?.takeIf { it.isFinite() }?.let { Math.floor(it).toInt() }
         if (doc["enable"] == false) return null
         // Dimension names since 1.16, numbers before (0 is the overworld).

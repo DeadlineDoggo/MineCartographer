@@ -12,6 +12,8 @@ import kotlin.io.path.outputStream
 import kotlin.io.path.writeText
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class MarkerReaderTest {
     private fun game(): Path = Files.createTempDirectory("game")
@@ -121,5 +123,34 @@ class MarkerReaderTest {
         assertEquals("Home", MarkerReader.plainText("\"Home\""))
         assertEquals("Home", MarkerReader.plainText("'Home'"))
         assertEquals("Home", MarkerReader.plainText("Home"))
+    }
+
+    @Test
+    fun `a Xaero file that isn't UTF-8 is read with its odd letters replaced, and the other files still count`() {
+        val game = game()
+        val world = game.resolve("saves/World").also { it.createDirectories() }
+        val dir = game.resolve("XaeroWaypoints/World/dim%0").also { it.createDirectories() }
+        dir.resolve("a.txt").writeText("waypoint:Base:B:1:64:2:12:false:0:gui.xaero_default:false:0:0:false")
+        // "Chata" with an a-acute written in cp1250 (0xE1), which isn't UTF-8.
+        Files.write(dir.resolve("b.txt"), "waypoint:Chat".toByteArray() + byteArrayOf(0xE1.toByte()) + ":C:3:64:4:12:false:0:x:false:0:0:false".toByteArray())
+
+        val found = MarkerReader.readAll(world)
+        assertEquals(listOf("Base", "Chat\uFFFD"), found.markers.map { it.name })
+        assertTrue(found.complete)
+    }
+
+    @Test
+    fun `a JourneyMap file that can't be read or is cut short is listed, not taken for a deleted waypoint`() {
+        val game = game()
+        val world = game.resolve("saves/World").also { it.createDirectories() }
+        val dir = game.resolve("journeymap/data/sp/World/waypoints").also { it.createDirectories() }
+        dir.resolve("a.json").writeText("""{"name":"Farm","x":1,"y":2,"z":3,"enable":true}""")
+        dir.resolve("b.json").writeText("""{"name":"Mine","x":1,""")
+        dir.resolve("c.json").createDirectories() // can't be read as a file, like one the game holds locked
+
+        val found = MarkerReader.readAll(world)
+        assertEquals(listOf("Farm"), found.markers.map { it.name })
+        assertEquals(setOf("b.json", "c.json"), found.unreadable.map { it.fileName.toString() }.toSet())
+        assertFalse(found.complete)
     }
 }
