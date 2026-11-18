@@ -119,7 +119,7 @@ object WorldExporter {
         // 1. Everything except the overworld chunk data comes from the base world as-is
         //    (other dimensions, player data, maps, advancements, datapacks...).
         progress("Copying world files", 0, 1)
-        copyTree(base.folder, output, skip = setOf("region", "entities", "session.lock"))
+        copyTree(base.folder, output, skip = setOf("region", "entities", "poi", "session.lock"))
 
         // 2. The overworld: every position that shows a chunk, grouped by region file.
         val positions = HashSet<ChunkPos>()
@@ -136,6 +136,9 @@ object WorldExporter {
         for ((region, chunks) in byRegion) {
             val blockData = HashMap<ChunkPos, RawChunk>()
             val entityData = HashMap<ChunkPos, RawChunk>()
+            // Points of interest (beds, job sites, portals...) only for chunks that stay as they were. The game trusts
+            // the ones it finds and builds the missing ones from the blocks, so a changed chunk gets none.
+            val poiData = HashMap<ChunkPos, RawChunk>()
             for (pos in chunks) {
                 val ref = stack.resolve(pos) ?: continue
                 // A chunk that can't be read (truncated file, bad compression, broken NBT) is left out with a warning.
@@ -166,6 +169,7 @@ object WorldExporter {
                     if (source == base && ref.pos == pos) {
                         blockData[pos] = raw // untouched chunk: copy the stored bytes
                         base.readEntities(pos)?.let { entityData[pos] = it }
+                        base.readPoi(pos)?.let { poiData[pos] = it }
                         unchanged++
                     } else {
                         val nbt = raw.nbt()
@@ -183,6 +187,7 @@ object WorldExporter {
                 } catch (e: Exception) {
                     blockData.remove(pos)
                     entityData.remove(pos)
+                    poiData.remove(pos)
                     warnings += "Chunk ${ref.pos} of ${ref.world.name} could not be read: ${e.message ?: e.javaClass.simpleName}"
                 }
             }
@@ -194,6 +199,7 @@ object WorldExporter {
             if (entityData.isNotEmpty() && targetDv >= DV_ENTITY_FILES) {
                 RegionWriter.write(output.resolve("entities").resolve(name), entityData)
             }
+            if (poiData.isNotEmpty()) RegionWriter.write(output.resolve("poi").resolve(name), poiData)
             done++
             progress("Writing region files", done, byRegion.size)
         }

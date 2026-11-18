@@ -81,6 +81,7 @@ class AnvilWorld private constructor(
     /** Region files stay open while the world is open; reads on them are thread-safe. */
     private val regions = ConcurrentHashMap<ChunkPos, RegionFile>()
     private val entityRegions = ConcurrentHashMap<ChunkPos, RegionFile>()
+    private val poiRegions = ConcurrentHashMap<ChunkPos, RegionFile>()
 
     override fun hasChunk(pos: ChunkPos) = present[regionKey(pos.regionX, pos.regionZ)]?.get(RegionFile.index(pos)) == true
 
@@ -109,6 +110,9 @@ class AnvilWorld private constructor(
     /** Entities live in their own region files since 1.17; null for older worlds or no entities. */
     fun readEntities(pos: ChunkPos): RawChunk? = region(entityRegions, info.folder.resolve("entities"), pos)?.read(pos)
 
+    /** The chunk's points of interest (beds, job sites, portals...) since 1.14; null for older worlds or none. */
+    fun readPoi(pos: ChunkPos): RawChunk? = region(poiRegions, info.folder.resolve("poi"), pos)?.read(pos)
+
     private fun region(cache: ConcurrentHashMap<ChunkPos, RegionFile>, dir: Path, pos: ChunkPos): RegionFile? {
         val key = regionKey(pos.regionX, pos.regionZ)
         cache[key]?.let { return it }
@@ -127,8 +131,10 @@ class AnvilWorld private constructor(
     fun close() {
         regions.values.forEach { runCatching { it.close() } }
         entityRegions.values.forEach { runCatching { it.close() } }
+        poiRegions.values.forEach { runCatching { it.close() } }
         regions.clear()
         entityRegions.clear()
+        poiRegions.clear()
     }
 
     companion object {
