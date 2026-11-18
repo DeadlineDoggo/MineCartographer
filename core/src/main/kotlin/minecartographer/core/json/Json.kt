@@ -1,7 +1,7 @@
-package minecartographer.textures
+package minecartographer.core.json
 
 /**
- * Just enough JSON for Minecraft's block model files: objects become maps, arrays lists,
+ * Just enough JSON for Minecraft's block model files and the minimap mods' waypoints: objects become maps, arrays lists,
  * numbers doubles. Lenient about what Mojang's files contain (comments are not expected).
  */
 object Json {
@@ -87,7 +87,9 @@ object Json {
                             'n' -> sb.append('\n'); 't' -> sb.append('\t'); 'r' -> sb.append('\r')
                             'b' -> sb.append('\b'); 'f' -> sb.append('\u000C')
                             'u' -> {
-                                sb.append(text.substring(pos, pos + 4).toInt(16).toChar())
+                                val code = text.substring(pos, minOf(pos + 4, text.length)).takeIf { it.length == 4 }?.toIntOrNull(16)
+                                    ?: fail("Bad \\u escape")
+                                sb.append(code.toChar())
                                 pos += 4
                             }
                             else -> sb.append(e)

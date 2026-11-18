@@ -3,7 +3,7 @@ package minecartographer.model
 import minecartographer.textures.AssetSource
 import minecartographer.textures.BlockModels
 import minecartographer.textures.Dir
-import minecartographer.textures.Json
+import minecartographer.core.json.Json
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.zip.ZipEntry

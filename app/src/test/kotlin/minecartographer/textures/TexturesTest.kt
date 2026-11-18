@@ -1,5 +1,6 @@
 package minecartographer.textures
 
+import minecartographer.core.json.Json
 import minecartographer.core.BlockState
 import kotlin.test.Test
 import kotlin.test.assertEquals

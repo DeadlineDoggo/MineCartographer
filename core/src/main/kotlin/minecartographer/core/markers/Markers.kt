@@ -1,6 +1,7 @@
 package minecartographer.core.markers
 
 import minecartographer.core.color.MinecraftColors
+import minecartographer.core.json.Json
 import minecartographer.core.nbt.CompoundTag
 import minecartographer.core.nbt.Nbt
 import java.nio.file.Files
@@ -91,11 +92,28 @@ object MarkerReader {
         return map.int("dimension")?.let { it == 0 } ?: true
     }
 
-    /** The text of a stored chat component: `{"text":"Home"}`, `"Home"` or plain. */
+    /**
+     * The text of a stored chat component: `{"text":"Home"}` (with the text of its `extra` parts after it), `"Home"`,
+     * `'Home'` or plain. JSON escapes (`\"`, `\\`, `\u0027`...) are decoded; line breaks become spaces.
+     */
     internal fun plainText(raw: String): String {
-        val text = Regex("\"text\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").find(raw)?.groupValues?.get(1)
-            ?: raw.trim().removeSurrounding("\"").removeSurrounding("'")
-        return text.replace("\\\"", "\"").replace("\\\\", "\\").replace("\\n", " ").trim()
+        val trimmed = raw.trim()
+        val text = when (val parsed = runCatching { Json.parse(trimmed) }.getOrNull()) {
+            is String -> parsed
+            is Map<*, *> -> componentText(parsed)
+            else -> trimmed.removeSurrounding("'")
+        }
+        return text.replace('\n', ' ').replace('\r', ' ').trim()
+    }
+
+    private fun componentText(c: Map<*, *>): String = buildString {
+        (c["text"] as? String)?.let(::append)
+        (c["extra"] as? List<*>)?.forEach { part ->
+            when (part) {
+                is String -> append(part)
+                is Map<*, *> -> append(componentText(part))
+            }
+        }
     }
 
     private val DYES = mapOf(
@@ -158,16 +176,21 @@ object MarkerReader {
         return result
     }
 
+    /**
+     * One JourneyMap waypoint file, read as JSON (JourneyMap writes it with Gson, which escapes `'`, `<`, `>`, `&` and
+     * `=` as `\u0027`...). Null for a file that isn't one, a switched-off waypoint or one of another dimension.
+     */
     internal fun journeyMapFile(json: String, file: String = "", modifiedMillis: Long? = null): Marker? {
-        fun text(key: String) = Regex("\"$key\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").find(json)?.groupValues?.get(1)
-        fun number(key: String) = Regex("\"$key\"\\s*:\\s*(-?\\d+)").find(json)?.groupValues?.get(1)?.toIntOrNull()
-        if (Regex("\"enable\"\\s*:\\s*false").containsMatchIn(json)) return null
-        val dimensions = Regex("\"dimensions\"\\s*:\\s*\\[([^\\]]*)]").find(json)?.groupValues?.get(1)
-        if (dimensions != null && "overworld" !in dimensions) return null
+        val doc = runCatching { Json.parse(json) }.getOrNull() as? Map<*, *> ?: return null
+        fun number(key: String) = (doc[key] as? Double)?.takeIf { it.isFinite() }?.let { Math.floor(it).toInt() }
+        if (doc["enable"] == false) return null
+        // Dimension names since 1.16, numbers before (0 is the overworld).
+        val dimensions = doc["dimensions"] as? List<*>
+        if (dimensions != null && dimensions.none { it is String && it.endsWith("overworld") || it == 0.0 }) return null
         val x = number("x") ?: return null
         val z = number("z") ?: return null
         val rgb = ((number("r") ?: 255) shl 16) or ((number("g") ?: 255) shl 8) or (number("b") ?: 255)
-        val name = plainText("\"" + (text("name") ?: "Waypoint") + "\"")
+        val name = (doc["name"] as? String)?.replace('\n', ' ')?.replace('\r', ' ')?.trim() ?: "Waypoint"
         val y = number("y")
         return Marker(MarkerKind.Waypoint, name, x, y, z, rgb and 0xFFFFFF, JOURNEYMAP, WaypointKey(JOURNEYMAP, file, name, x, y, z), modifiedMillis)
     }

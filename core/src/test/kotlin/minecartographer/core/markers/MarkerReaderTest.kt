@@ -94,4 +94,32 @@ class MarkerReaderTest {
     fun `a world outside a saves folder has no mod waypoints and no maps is no problem`() {
         assertEquals(emptyList(), MarkerReader.read(Files.createTempDirectory("lonely")))
     }
+
+    @Test
+    fun `JourneyMap names are decoded as JSON`() {
+        // Gson, which JourneyMap writes with, escapes ' < > & = as \u0027 and so on
+        val m = MarkerReader.journeyMapFile("""{"name":"Tom\u0027s \u003cbase\u003e \\n \"1\"","x":1.0,"y":64,"z":-2,"enable":true,"dimensions":["minecraft:overworld"]}""")!!
+        assertEquals("Tom's <base> \\n \"1\"", m.name)
+        assertEquals(listOf(1, 64, -2), listOf(m.x, m.y, m.z))
+    }
+
+    @Test
+    fun `JourneyMap files before 1_16 name the overworld 0, other dimensions and switched off ones are left out`() {
+        assertEquals("Old", MarkerReader.journeyMapFile("""{"name":"Old","x":1,"y":2,"z":3,"enable":true,"dimensions":[0, -1]}""")?.name)
+        assertEquals(null, MarkerReader.journeyMapFile("""{"name":"Hell","x":1,"y":2,"z":3,"enable":true,"dimensions":[-1]}"""))
+        assertEquals(null, MarkerReader.journeyMapFile("""{"name":"Off","x":1,"y":2,"z":3,"enable":false}"""))
+        assertEquals(null, MarkerReader.journeyMapFile("""not json"""))
+    }
+
+    @Test
+    fun `chat component text is decoded`() {
+        assertEquals("Home", MarkerReader.plainText("""{"text":"Home"}"""))
+        assertEquals("Tom's base", MarkerReader.plainText("""{"text":"Tom\u0027s base"}"""))
+        assertEquals("a\\nb", MarkerReader.plainText("""{"text":"a\\nb"}"""), "a backslash and n is not a line break")
+        assertEquals("a b", MarkerReader.plainText("""{"text":"a\nb"}"""))
+        assertEquals("Big base", MarkerReader.plainText("""{"text":"","extra":[{"text":"Big "},"base"]}"""))
+        assertEquals("Home", MarkerReader.plainText("\"Home\""))
+        assertEquals("Home", MarkerReader.plainText("'Home'"))
+        assertEquals("Home", MarkerReader.plainText("Home"))
+    }
 }
