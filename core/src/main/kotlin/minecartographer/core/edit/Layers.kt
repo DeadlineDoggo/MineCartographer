@@ -161,11 +161,9 @@ data class LayerStack(
     fun positionsOf(id: Long): Set<ChunkPos> = when (val layer = layer(id)) {
         is ChunkLayer -> layer.chunks.keys
         is BaseLayer -> buildSet {
-            val b = layer.world.bounds
-            if (b != null) for (x in b.minX..b.maxX) for (z in b.minZ..b.maxZ) {
-                val pos = ChunkPos(x, z)
-                if (layer.resolve(pos) != null) add(pos)
-            }
+            // The world's own chunks (not its bounds: one far-off chunk would make that billions of positions), minus
+            // the erased ones, plus the ones placed in it.
+            for (pos in layer.world.chunks()) if (layer.resolve(pos) != null) add(pos)
             for ((pos, edit) in layer.overrides) if (edit is ChunkEdit.Place) add(pos)
         }
         null -> emptySet()

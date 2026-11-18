@@ -2,6 +2,19 @@ package minecartographer.core.edit
 
 import minecartographer.core.ChunkPos
 import minecartographer.core.DemoWorld
+import minecartographer.core.anvil.AnvilWorld
+import minecartographer.core.anvil.RawChunk
+import minecartographer.core.anvil.RegionFile
+import minecartographer.core.anvil.RegionWriter
+import minecartographer.core.anvil.WorldInfo
+import minecartographer.core.nbt.CompoundTag
+import minecartographer.core.nbt.Nbt
+import minecartographer.core.nbt.StringTag
+import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import java.time.Duration
+import kotlin.io.path.outputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -108,5 +121,37 @@ class LayerStackTest {
         val b = stack.bounds!!
         assertEquals(20, b.maxX)
         assertEquals(-30, b.minZ)
+    }
+
+    @Test
+    fun `the base layer's chunks are the world's own, however far apart`(@TempDir tmp: Path) {
+        // Two chunks a million blocks apart in both directions: their bounds hold almost four billion positions.
+        val near = ChunkPos(0, 0)
+        val far = ChunkPos(62_500, 62_500)
+        val erased = ChunkPos(1, 0)
+        fun chunk(pos: ChunkPos) = RawChunk.of(CompoundTag().apply { putInt("DataVersion", 3700); putInt("xPos", pos.x); putInt("zPos", pos.z) })
+        for ((region, chunks) in listOf(near, far, erased).groupBy { it.regionX to it.regionZ }) {
+            RegionWriter.write(tmp.resolve("region").resolve(RegionFile.fileName(region.first, region.second)), chunks.associateWith(::chunk))
+        }
+        tmp.resolve("level.dat").outputStream().use {
+            Nbt.writeGzip(it, CompoundTag().apply {
+                this["Data"] = CompoundTag().apply {
+                    putInt("version", WorldInfo.ANVIL)
+                    putInt("DataVersion", 3700)
+                    this["LevelName"] = StringTag("Far apart")
+                }
+            })
+        }
+        val world = AnvilWorld.open(tmp)
+        try {
+            val placed = ChunkPos(-5, 3)
+            val stack = LayerStack.of(world).update(BaseLayer.BASE_ID) {
+                (it as BaseLayer).withOverrides(mapOf(erased to ChunkEdit.Delete, placed to ChunkEdit.Place(ChunkRef(world, near))))
+            }
+            val positions = assertTimeoutPreemptively<Set<ChunkPos>>(Duration.ofSeconds(5)) { stack.positionsOf(BaseLayer.BASE_ID) }
+            assertEquals<Set<ChunkPos>>(setOf(near, far, placed), positions)
+        } finally {
+            world.close()
+        }
     }
 }

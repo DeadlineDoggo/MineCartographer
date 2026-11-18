@@ -31,6 +31,15 @@ interface WorldSource {
 
     fun hasChunk(pos: ChunkPos): Boolean
 
+    /**
+     * Every position [hasChunk] is true for. The default looks through [bounds], which is fine for a small world;
+     * a real save lists the chunks it has, as one far-off chunk can make its bounds huge.
+     */
+    fun chunks(): Sequence<ChunkPos> {
+        val b = bounds ?: return emptySequence()
+        return sequence { for (x in b.minX..b.maxX) for (z in b.minZ..b.maxZ) ChunkPos(x, z).let { if (hasChunk(it)) yield(it) } }
+    }
+
     fun loadSurface(pos: ChunkPos): ChunkSurface?
 
     /** The chunk's visible blocks; worlds without block data build them from the surface. May hit the disk too. */

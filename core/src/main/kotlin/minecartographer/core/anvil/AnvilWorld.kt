@@ -122,7 +122,7 @@ class AnvilWorld private constructor(
     }
 
     /** All chunk positions with data, region by region. */
-    fun chunks(): Sequence<ChunkPos> = present.asSequence().flatMap { (key, bits) ->
+    override fun chunks(): Sequence<ChunkPos> = present.asSequence().flatMap { (key, bits) ->
         val rx = key.x
         val rz = key.z
         bits.stream().toArray().asSequence().map { i -> ChunkPos(rx * 32 + (i and 31), rz * 32 + (i shr 5)) }
