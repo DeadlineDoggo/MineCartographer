@@ -4,7 +4,9 @@ import androidx.compose.runtime.Composable
 import minecartographer.core.ChunkPos
 import minecartographer.core.edit.ChunkLayer
 import minecartographer.editor.EditorState
+import minecartographer.core.BlockState
 import minecartographer.editor.MapMenu
+import minecartographer.editor.PickedBlock
 import minecartographer.editor.SelectMode
 
 /** The right-click menu on the map: for the selection when clicked on it, else for the chunk or ground under the cursor. */
@@ -28,6 +30,10 @@ private fun mapMenuEntries(state: EditorState, menu: MapMenu): List<MenuEntry> {
     val under = chunk?.let(stack::layerAt)
     val canPaste = state.clipboard != null
     return buildList {
+        menu.block?.let { block ->
+            addAll(blockEntries(state, block))
+            add(MenuSeparator)
+        }
         if (onSelection) {
             add(MenuItem("Analyze selection…") { state.analyzeSelection() })
             add(MenuSeparator)
@@ -80,8 +86,25 @@ private fun mapMenuEntries(state: EditorState, menu: MapMenu): List<MenuEntry> {
             MenuItem("None", "Ctrl+Shift+A", selection.isNotEmpty()) { state.clearSelection() },
             MenuItem("Invert", "Ctrl+I") { state.invertSelection() },
         )))
-        if (chunk != null) add(SubMenu("Copy coordinates", coordinates(state, chunk)))
+        if (chunk != null) add(SubMenu(if (menu.block != null) "Copy chunk coordinates" else "Copy coordinates", coordinates(state, chunk)))
     }
+}
+
+/** The entries for the block picked with the Inspect block tool, on top of the map's menu. */
+private fun blockEntries(state: EditorState, block: PickedBlock): List<MenuEntry> {
+    val name = if (block.state.name == BlockState.COLOR_BLOCK) "Terrain color" else block.state.path
+    return listOf(
+        MenuItem("$name  ·  ${block.coords}", enabled = false) {},
+        MenuItem("Add a waypoint here") { state.addWaypointAt(block.world, block.x, block.y, block.z) },
+        SubMenu("Copy block coordinates", listOf(
+            "X Y Z" to block.coords,
+            "X, Y, Z" to "${block.x}, ${block.y}, ${block.z}",
+            "Teleport on top" to "/tp @s ${block.x} ${block.y + 1} ${block.z}",
+            // As the game writes it in commands: name[key=value,...].
+            "Block" to block.state.name + block.state.properties.entries.sortedBy { it.key }
+                .joinToString(",", "[", "]") { "${it.key}=${it.value}" }.takeIf { block.state.properties.isNotEmpty() }.orEmpty(),
+        ).map { (label, text) -> MenuItem(label, text) { state.copyText(text) } }),
+    )
 }
 
 /** The chunk's coordinates in the forms people paste elsewhere: chunk, block, region file and a teleport command. */

@@ -59,6 +59,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import minecartographer.AppInfo
 import minecartographer.ui.FileDialogs
+import minecartographer.core.BlockState
+import minecartographer.viewport.BlockHit
+import minecartographer.viewport.BlockPick
 import minecartographer.viewport.ChunkTileCache
 import minecartographer.viewport.IsoView
 import minecartographer.textures.AssetSource
@@ -260,6 +263,117 @@ class EditorState {
             val (x, y, z) = groundUnder(stack, view, hs, turn, u, v)
             withContext(Dispatchers.Main) { addWaypointAt(world, x, y, z) }
         }
+    }
+
+    // ---- Inspect block tool ----
+
+    /** The block picked with the Inspect block tool, shown in the Block dock and outlined on the map of its world. */
+    var pickedBlock by mutableStateOf<PickedBlock?>(null)
+    private var pickRuns = 0
+
+    /** The block under the pointer while the Inspect block tool is active, outlined faintly; null elsewhere. */
+    var hoveredBlock by mutableStateOf<PickedBlock?>(null)
+        private set
+
+    /** Where to look for the block under the pointer; only the latest one counts (see [hoverBlockAt]). */
+    private class HoverRequest(val sx: Float, val sy: Float, val width: Float, val height: Float, val chunk: ChunkPos?)
+    private var hoverRequests: kotlinx.coroutines.channels.Channel<HoverRequest>? = null
+
+    /**
+     * Picks the block seen at ([sx], [sy]) pixels in a map of [width] x [height], where the drawn tiles show [chunk]
+     * (null: nothing is drawn there, which clears the pick). The chunk's blocks may have to be read, so the block is
+     * looked for in the background; a later click wins over an earlier one still looking. [then] gets the result.
+     */
+    fun inspectBlockAt(sx: Float, sy: Float, width: Float, height: Float, chunk: ChunkPos?, quiet: Boolean = false, then: (PickedBlock?) -> Unit = {}) {
+        val run = ++pickRuns
+        val find = blockFinder(sx, sy, width, height, chunk)
+        if (find == null) {
+            pickedBlock = null
+            then(null)
+            return
+        }
+        scope.launch(Dispatchers.IO) {
+            val picked = find()
+            withContext(Dispatchers.Main) {
+                if (run != pickRuns) return@withContext
+                pickedBlock = picked
+                if (picked != null) {
+                    leftTab = DockTab.Block
+                    leftDockVisible = true
+                } else if (!quiet) notify("No block found there", warning = true)
+                then(picked)
+            }
+        }
+    }
+
+    /**
+     * The right-click menu of the Inspect block tool: picks the block under the click at ([sx], [sy]) and opens the
+     * map's menu with it on top (the chunk's entries under it), at [at].
+     */
+    fun openBlockMenu(at: IntOffset, sx: Float, sy: Float, width: Float, height: Float, chunk: ChunkPos?, ground: ChunkPos) {
+        inspectBlockAt(sx, sy, width, height, chunk, quiet = true) { picked -> mapMenu = MapMenu(at, chunk, ground, picked) }
+    }
+
+    /**
+     * Outlines the block under the pointer at ([sx], [sy]), over [chunk] (null: off the map, which clears it).
+     * Requests are taken in the background one at a time, the latest first, so moving the pointer never queues up reads.
+     */
+    fun hoverBlockAt(sx: Float, sy: Float, width: Float, height: Float, chunk: ChunkPos?) {
+        if (chunk == null && hoverRequests == null) return
+        val requests = hoverRequests ?: kotlinx.coroutines.channels.Channel<HoverRequest>(kotlinx.coroutines.channels.Channel.CONFLATED).also { channel ->
+            hoverRequests = channel
+            scope.launch(Dispatchers.Main) {
+                for (r in channel) {
+                    val find = blockFinder(r.sx, r.sy, r.width, r.height, r.chunk)
+                    hoveredBlock = if (find == null) null else withContext(Dispatchers.IO) { find() }
+                }
+            }
+        }
+        requests.trySend(HoverRequest(sx, sy, width, height, chunk))
+    }
+
+    /** Forgets the block under the pointer (the pointer left the map, or another tool was chosen). */
+    fun clearHoveredBlock() {
+        if (hoveredBlock == null && hoverRequests == null) return
+        hoverRequests?.trySend(HoverRequest(0f, 0f, 0f, 0f, null))
+        hoveredBlock = null
+    }
+
+    /**
+     * What finds the block seen at ([sx], [sy]) in [chunk] with the view as it is now (run it off the UI thread), or
+     * null when nothing is drawn there.
+     */
+    private fun blockFinder(sx: Float, sy: Float, width: Float, height: Float, chunk: ChunkPos?): (() -> PickedBlock?)? {
+        val world = activeWorld ?: return null
+        val stack = activeStack ?: return null
+        if (chunk == null) return null
+        val source = shownAt(stack, chunk) ?: return null
+        val view = view
+        val hs = renderSettings.heightScale.toDouble()
+        val turn = rotation
+        val u = view.screenToU(sx, width)
+        val v = view.screenToV(sy, height)
+        return {
+            runCatching { blockSeen(source, chunk, view, hs, turn, u, v) }.getOrNull()
+                ?.let { PickedBlock(world, chunk, it.x, it.y, it.z, it.state, source.layerName) }
+        }
+    }
+
+    /** What the map draws at [chunk]: the world and position its tile comes from, and the layer showing it. */
+    class ShownChunk(val world: WorldSource, val pos: ChunkPos, val layerName: String)
+
+    /** [chunk]'s content as the map draws it (the same source the viewport asks tiles for); null where nothing is drawn. */
+    fun shownAt(stack: LayerStack, chunk: ChunkPos): ShownChunk? {
+        val layer = stack.layerAt(chunk) ?: return null
+        val ref = stack.contentOf(layer, chunk) ?: return null
+        val (world, pos) = drawSource(ref, chunk, stack, layer.blockMap)
+        return ShownChunk(world, pos, layer.name)
+    }
+
+    /** The block seen at the view point ([u], [v]) in [chunk], drawn from [source]. Reads files: call it off the UI thread. */
+    fun blockSeen(source: ShownChunk, chunk: ChunkPos, view: IsoView, hs: Double, turn: Int, u: Double, v: Double): BlockHit? {
+        val blocks = tiles.blocks(source.world, source.pos) ?: return null
+        return BlockPick.inChunk(blocks, chunk, view, hs, turn, u, v)
     }
 
     /** The block column seen at the view point ([u], [v]): walks down the line of sight until it meets a column at least that high. */
@@ -482,6 +596,7 @@ class EditorState {
         historyRevision++
         changed()
         worlds.remove(world)
+        if (pickedBlock?.world == world) pickedBlock = null
         stacks.remove(world.id)
         markers.remove(world.id)
         waypointOverlays.remove(world.id)
@@ -1122,6 +1237,7 @@ class EditorState {
 
     fun selectTool(t: Tool) {
         tool = t
+        if (t != Tool.InspectBlock) clearHoveredBlock()
         if (pasteMode) cancelPaste()
     }
 
@@ -1926,8 +2042,22 @@ data class AnalyzeRequest(
     val run: Int,
 )
 
-/** A right-click on the map at [at] (pixels in the map): the [chunk] under it, or null on empty ground, and the [ground] position. */
-class MapMenu(val at: IntOffset, val chunk: ChunkPos?, val ground: ChunkPos)
+/**
+ * A block picked on the map of [world]: its world position ([x], [y], [z]) in [chunk], the [state] the map shows
+ * there and the [layerName] of the layer showing it.
+ */
+data class PickedBlock(val world: WorldSource, val chunk: ChunkPos, val x: Int, val y: Int, val z: Int, val state: BlockState, val layerName: String) {
+    val coords: String get() = "$x $y $z"
+
+    /** True when [other] is the same block of the same world. */
+    fun samePlace(other: PickedBlock?) = other != null && other.world == world && other.x == x && other.y == y && other.z == z
+}
+
+/**
+ * A right-click on the map at [at] (pixels in the map): the [chunk] under it, or null on empty ground, and the [ground]
+ * position; with the Inspect block tool also the [block] under it.
+ */
+class MapMenu(val at: IntOffset, val chunk: ChunkPos?, val ground: ChunkPos, val block: PickedBlock? = null)
 
 /** A right-click on the pin of [marker] at [at] (pixels in the map). */
 class MarkerMenu(val at: IntOffset, val marker: Marker)

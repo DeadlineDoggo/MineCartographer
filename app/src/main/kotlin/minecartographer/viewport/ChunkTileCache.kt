@@ -344,6 +344,13 @@ class ChunkTileCache(
         generation++
     }
 
+    /**
+     * The blocks of [world]'s chunk at [pos] as the map draws them (the deep data of chunks laid out by a layer), from
+     * the cache or read now; for picking a block on the map. Reads files: call it off the UI thread.
+     */
+    fun blocks(world: WorldSource, pos: ChunkPos): ChunkBlocks? =
+        load(world, DataKey(world.id, pos, if (isMoved(world.id)) Data.Deep else Data.Blocks)) as? ChunkBlocks
+
     /** Cached chunk data, or reads it from the world (null for chunks with nothing to draw). */
     private fun load(world: WorldSource, key: DataKey): Any? {
         val blank = SurfaceKey(key.worldId, key.pos)

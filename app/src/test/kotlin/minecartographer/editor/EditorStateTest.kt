@@ -1,10 +1,13 @@
 package minecartographer.editor
 
+import minecartographer.core.BlockState
 import minecartographer.core.ChunkPos
+import minecartographer.core.Rotation
 import minecartographer.core.DemoWorld
 import minecartographer.core.edit.BaseLayer
 import minecartographer.core.edit.ChunkLayer
 import minecartographer.core.edit.ChunkRef
+import minecartographer.viewport.IsoView
 import java.nio.file.Files
 import javax.swing.SwingUtilities
 import kotlin.test.AfterTest
@@ -171,5 +174,51 @@ class EditorStateTest {
         } finally {
             Files.deleteIfExists(file)
         }
+    }
+
+    /** The highest column of [world]'s chunk at [pos]: (local x, local z, height). Its top can't be hidden by its own chunk. */
+    private fun highest(world: DemoWorld, pos: ChunkPos): Triple<Int, Int, Int> {
+        val surface = world.loadSurface(pos)!!
+        var best = Triple(0, 0, surface.height(0, 0))
+        for (lz in 0..15) for (lx in 0..15) if (surface.height(lx, lz) > best.third) best = Triple(lx, lz, surface.height(lx, lz))
+        return best
+    }
+
+    /** What the Inspect block tool finds looking at the middle of the top of block ([x], [y], [z]) in [chunk] with [turn] turns. */
+    private fun inspect(chunk: ChunkPos, x: Int, y: Int, z: Int, turn: Int): Triple<Int, Int, Int>? {
+        val source = state.shownAt(state.activeStack!!, chunk) ?: return null
+        val (rx, rz) = Rotation.point(turn, x + 0.5, z + 0.5)
+        val hit = state.blockSeen(source, chunk, IsoView(), 1.0, turn, IsoView.u(rx, rz), IsoView.v(rx, y + 1.0, rz, 1.0))
+        return hit?.let { Triple(it.x, it.y, it.z) }
+    }
+
+    @Test
+    fun `inspect block finds the block seen in every rotation`() {
+        val chunk = ChunkPos(3, 2)
+        val (lx, lz, top) = highest(valley, chunk)
+        val x = chunk.x * 16 + lx
+        val z = chunk.z * 16 + lz
+        for (turn in 0..3) assertEquals(Triple(x, top, z), inspect(chunk, x, top, z, turn), "rotation $turn")
+    }
+
+    @Test
+    fun `inspect block on a pasted chunk gives the position where it is placed`() {
+        select(ChunkPos(3, 2))
+        assertTrue(state.copy())
+        state.openWorld(hills)
+        state.pasteAt(ChunkPos(-4, 6))
+        val (lx, lz, top) = highest(valley, ChunkPos(3, 2))
+        val x = -4 * 16 + lx
+        val z = 6 * 16 + lz
+        for (turn in 0..3) assertEquals(Triple(x, top, z), inspect(ChunkPos(-4, 6), x, top, z, turn), "rotation $turn")
+        assertEquals(state.activeStack!!.active.name, state.shownAt(state.activeStack!!, ChunkPos(-4, 6))?.layerName)
+    }
+
+    @Test
+    fun `inspect block on empty ground picks nothing`() {
+        state.pickedBlock = PickedBlock(valley, ChunkPos(0, 0), 1, 70, 3, BlockState.of("minecraft:stone"), "Valley")
+        state.inspectBlockAt(10f, 10f, 100f, 100f, chunk = null)
+        assertNull(state.pickedBlock)
+        assertNull(state.shownAt(state.activeStack!!, ChunkPos(500, 500)), "outside the world nothing is drawn")
     }
 }

@@ -443,7 +443,8 @@ private fun Toolbox(state: EditorState) {
                 }
                 IconButton(toolIcon(tool), "${tool.label} (${tool.keyLabel})", selected = state.tool == tool, size = 36.dp, iconSize = 18.dp) {
                     state.selectTool(tool)
-                    state.leftTab = DockTab.ToolOptions
+                    // The Inspect block tool has no options: its dock shows the picked block.
+                    state.leftTab = if (tool == Tool.InspectBlock) DockTab.Block else DockTab.ToolOptions
                 }
             }
         }
@@ -455,6 +456,7 @@ private fun tabIcon(tab: DockTab) = when (tab) {
     DockTab.Worlds -> Icons.Worlds
     DockTab.Selection -> Icons.Selection
     DockTab.View -> Icons.Eye
+    DockTab.Block -> Icons.Block
 }
 
 /** Tabbed dock (icon tabs like GIMP's dockable dialogs). */
@@ -481,6 +483,7 @@ private fun LeftDock(state: EditorState, modifier: Modifier) {
                 DockTab.Worlds -> WorldsPanel(state)
                 DockTab.Selection -> SelectionPanel(state)
                 DockTab.View -> ViewPanel(state)
+                DockTab.Block -> BlockPanel(state)
             }
         }
     }

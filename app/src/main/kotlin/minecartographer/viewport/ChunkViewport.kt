@@ -221,7 +221,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
         state.placingWaypoint || state.pasteMode -> PointerIcon(Cursor(Cursor.CROSSHAIR_CURSOR))
         state.tool == Tool.Pan -> PointerIcon(Cursor(Cursor.HAND_CURSOR))
         state.tool == Tool.MoveLayer -> PointerIcon(Cursor(Cursor.MOVE_CURSOR))
-        state.tool == Tool.RectSelect -> PointerIcon(Cursor(Cursor.CROSSHAIR_CURSOR))
+        state.tool == Tool.RectSelect || state.tool == Tool.InspectBlock -> PointerIcon(Cursor(Cursor.CROSSHAIR_CURSOR))
         else -> PointerIcon.Default
     }
 
@@ -307,6 +307,10 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                                             hit?.let(state::pickLayerAt)
                                             Drag.None
                                         }
+                                        Tool.InspectBlock -> {
+                                            state.inspectBlockAt(p.x, p.y, w, h, hit)
+                                            Drag.None
+                                        }
                                     }
                                 }
                             }
@@ -327,6 +331,9 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                                 last = p
                                 val hit = if (drag == Drag.None && onControl(p)) null else pick(p)
                                 state.hovered = hit
+                                if (state.tool == Tool.InspectBlock && !state.pasteMode && !state.placingWaypoint) {
+                                    state.hoverBlockAt(p.x, p.y, w, h, hit.takeIf { drag == Drag.None })
+                                }
                                 state.hoverMarker = if (drag == Drag.None && !onControl(p)) pickPin(p) else null
                                 if (state.pasteMode) state.pasteAnchor = hit ?: pickGround(p, w, h)
                             }
@@ -341,6 +348,8 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                                     if (pin != null) {
                                         state.markerMenu = MarkerMenu(where, pin)
                                         state.menuMarker = pin
+                                    } else if (state.tool == Tool.InspectBlock && !state.pasteMode) {
+                                        state.openBlockMenu(where, at.x, at.y, w, h, pick(at), pickGround(at, w, h))
                                     } else state.mapMenu = MapMenu(where, pick(at), pickGround(at, w, h))
                                 }
                                 if (!b.isPrimaryPressed && !b.isSecondaryPressed && !b.isTertiaryPressed) {
@@ -357,6 +366,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                             }
                             PointerEventType.Exit -> {
                                 state.hovered = null
+                                state.clearHoveredBlock()
                                 state.hoverMarker = null
                             }
                         }
@@ -378,6 +388,8 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
             if (state.pasteMode && anchor != null) state.clipboard?.placedAt(anchor).orEmpty() else emptyMap()
         val rect = state.rectDrag
         val brushCenter = hovered?.takeIf { !state.pasteMode && (state.tool == Tool.BrushSelect || state.tool == Tool.Eraser) }
+        // The Inspect block tool outlines the block under the pointer instead of lighting up its chunk.
+        val hoveredChunk = hovered.takeIf { state.pasteMode || state.tool != Tool.InspectBlock }
         val brushRadius = (state.brushSize - 1) / 2
         val emphasizeActive = state.tool == Tool.MoveLayer || state.tool == Tool.Eraser
         val activeId = stack.activeId
@@ -444,9 +456,9 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                     erased && selected -> EditorTheme.accent.copy(alpha = 0.7f)
                     erased -> EditorTheme.deleted.copy(alpha = 0.7f)
                     inBrush && eraser -> EditorTheme.deleted.copy(alpha = 0.45f)
-                    selected && (pos == hovered || inBrush) -> EditorTheme.accent.copy(alpha = 0.6f)
+                    selected && (pos == hoveredChunk || inBrush) -> EditorTheme.accent.copy(alpha = 0.6f)
                     selected -> EditorTheme.accent.copy(alpha = 0.45f)
-                    pos == hovered || inBrush -> Color.White.copy(alpha = 0.22f)
+                    pos == hoveredChunk || inBrush -> Color.White.copy(alpha = 0.22f)
                     emphasizeActive && layer?.id == activeId -> Color(layer.color).copy(alpha = 0.5f)
                     layerColors && layer is ChunkLayer -> Color(layer.color).copy(alpha = 0.22f)
                     else -> Color.Unspecified
@@ -510,6 +522,10 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
             }
         }
 
+        val picked = state.pickedBlock?.takeIf { it.world == state.activeWorld }
+        state.hoveredBlock?.takeIf { it.world == state.activeWorld && state.tool == Tool.InspectBlock && !it.samePlace(picked) }
+            ?.let { drawBlockOutline(it.x, it.y, it.z, view, hs, rotation, faint = true) }
+        picked?.let { drawBlockOutline(it.x, it.y, it.z, view, hs, rotation) }
         drawMarkers(state.visibleMarkers(), view, hs, rotation, measurer, markerLabels, state.hoverMarker, state.menuMarker)
 
         if (prefetch.update(view, stack, rotation, size.width, size.height)) {

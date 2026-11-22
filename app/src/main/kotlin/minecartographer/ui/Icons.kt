@@ -186,6 +186,21 @@ object Icons {
         drawPath(poly(0.55f, 0.5f, 0.55f, 0.98f, 0.68f, 0.85f, 0.78f, 1f, 0.86f, 0.95f, 0.76f, 0.8f, 0.95f, 0.8f), color)
     }
 
+    /** A block seen from above at an angle: the outline of a cube and its three near edges. */
+    val Block = EditorIcon { color ->
+        drawPath(poly(0.5f, 0.08f, 0.88f, 0.28f, 0.88f, 0.72f, 0.5f, 0.92f, 0.12f, 0.72f, 0.12f, 0.28f), color, style = stroke())
+        line(color, 0.5f, 0.48f, 0.12f, 0.28f)
+        line(color, 0.5f, 0.48f, 0.88f, 0.28f)
+        line(color, 0.5f, 0.48f, 0.5f, 0.92f)
+    }
+
+    /** The block with its top face filled, the one picked: "what is this block?" */
+    val InspectBlock = EditorIcon { color ->
+        drawPath(poly(0.5f, 0.08f, 0.88f, 0.28f, 0.5f, 0.48f, 0.12f, 0.28f), color)
+        drawPath(poly(0.5f, 0.08f, 0.88f, 0.28f, 0.88f, 0.72f, 0.5f, 0.92f, 0.12f, 0.72f, 0.12f, 0.28f), color, style = stroke())
+        line(color, 0.5f, 0.48f, 0.5f, 0.92f)
+    }
+
     // ---- Layers ----
 
     val Layers = EditorIcon { color ->

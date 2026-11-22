@@ -97,6 +97,7 @@ fun toolIcon(tool: Tool): EditorIcon = when (tool) {
     Tool.MoveLayer -> Icons.MoveLayer
     Tool.Eraser -> Icons.Eraser
     Tool.PickLayer -> Icons.Picker
+    Tool.InspectBlock -> Icons.InspectBlock
 }
 
 @Composable

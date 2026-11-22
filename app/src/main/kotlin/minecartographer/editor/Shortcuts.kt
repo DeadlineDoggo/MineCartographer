@@ -74,7 +74,12 @@ fun EditorState.handleKey(e: KeyEvent): Boolean {
     }
     when (e.key) {
         Key.Delete, Key.Backspace -> clearSelected()
-        Key.Escape -> if (placingWaypoint) placingWaypoint = false else if (pasteMode) cancelPaste() else clearSelection()
+        Key.Escape -> when {
+            placingWaypoint -> placingWaypoint = false
+            pasteMode -> cancelPaste()
+            tool == Tool.InspectBlock && pickedBlock != null -> pickedBlock = null
+            else -> clearSelection()
+        }
         Key.F -> fitToWorld()
         Key.One -> setRenderMode(RenderMode.Map)
         Key.Two -> setRenderMode(RenderMode.Blocks)

@@ -9,6 +9,7 @@ enum class Tool(val label: String, val key: Key, val keyLabel: String, val hint:
     MoveLayer("Move layer", Key.M, "M", "Drag to move the active layer by whole chunks."),
     Eraser("Eraser", Key.E, "E", "Paint to remove chunks from the active layer. On the original world this hides chunks; the save is never touched."),
     PickLayer("Pick layer", Key.I, "I", "Click a chunk to make the layer it comes from active."),
+    InspectBlock("Inspect block", Key.K, "K", "Click a block on the map to see what it is and where. Esc clears it."),
 }
 
 enum class SelectMode(val label: String) {
@@ -22,6 +23,7 @@ enum class DockTab(val title: String) {
     Worlds("Worlds"),
     Selection("Selection"),
     View("View"),
+    Block("Block"),
 }
 
 val BRUSH_SIZES = listOf(1, 3, 5, 9)
