@@ -30,6 +30,8 @@ new world. Your original saves are only read, never modified.
 - **Texture atlas:** every texture of your mods and packs on one page, with export to PNG.
 - **Model editor:** open any block model of your mods and packs, change its elements, faces and
   textures in a 3D view, and export it as a resource pack.
+- **Inspect block:** click any block on the map to see it up close with its textures, its properties,
+  mod and position, and where it came from when it was pasted, turned or raised.
 - **Tools** to move a layer, erase chunks and pick the layer under the cursor.
 - **Copy and paste between worlds**, at the cursor or at the original coordinates.
 - **Non-destructive edits** with full undo/redo. Erasing in the original world only hides
@@ -113,6 +115,17 @@ player was, the dimensions and their size, the mods and where they were found, w
 each path. Middle drag moves the view.
 
 ![Right-click menu on the selection](docs/right-click-menu.png)
+
+**Inspect block** (K) shows one block. Click a block on the map: it gets an outline, and the Block dock
+shows it up close in 3D with the world's textures (drag to turn it), its name, properties and mod, its
+color on the map and every texture it is drawn with, with the jar or pack each comes from. Below that
+are its coordinates, chunk, section and region file. For a block of a pasted, turned or raised layer the
+dock says which world it came from and where it was there. Worlds before 1.13 also show the numeric id
+and data value the block is stored as. The block under the pointer is outlined faintly as you move. In
+the cave view the tool picks the cave block that is drawn, not the ground above it. Right-click a block
+to add a waypoint on it or copy its coordinates, a `/tp` command or its full name.
+
+![Inspecting a block](docs/inspect-block.png)
 
 **Analyze.** Choose *Analyze selection…* (or *Analyze layer…* on a layer) to list every block in
 those chunks, not only what shows from above: how many of each, in how many chunks, its texture,
@@ -331,13 +344,13 @@ The file is plain XML, so you can read it or keep it in version control:
 | Keys | Action |
 |---|---|
 | WASD / arrows, middle drag | Move the view |
-| Right click | Menu for the selection, a chunk, a layer or a waypoint pin |
+| Right click | Menu for the selection, a chunk, a layer or a waypoint pin; with Inspect block, for the block |
 | Mouse wheel, `+` / `-` | Zoom |
 | `,` / `.` | Rotate the view |
 | F | Fit the world on screen |
 | 1, 2, 3 | Map, Blocks, Textured render mode |
 | V | 2D view from above / 3D view |
-| H, B, R, M, E, I | Move view, brush select, rectangle select, move layer, eraser, pick layer |
+| H, B, R, M, E, I, K | Move view, brush select, rectangle select, move layer, eraser, pick layer, inspect block |
 | Shift / Ctrl while selecting | Add to / subtract from the selection |
 | Ctrl+A, Ctrl+Shift+A, Ctrl+I | Select all, none, invert |
 | Ctrl+C / Ctrl+Shift+C | Copy from the active layer / copy everything visible |
@@ -353,7 +366,7 @@ The file is plain XML, so you can read it or keep it in version control:
 | Ctrl+N, Ctrl+Shift+O | New project, open project |
 | Ctrl+S, Ctrl+Alt+S | Save project, save project as |
 | Ctrl+O, Ctrl+Shift+S | Open world, export |
-| Esc | Cancel placing a waypoint or pasting, else clear the selection |
+| Esc | Cancel placing a waypoint or pasting, clear the inspected block, else clear the selection |
 
 ## Project layout
 
