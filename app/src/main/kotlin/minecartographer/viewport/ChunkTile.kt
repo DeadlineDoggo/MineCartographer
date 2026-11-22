@@ -54,6 +54,8 @@ class ChunkTile(
     val pixels: IntArray?,
     /** Drawn from above: a square of 32 x 32 units, see [IsoView.flat]. */
     val flat: Boolean = false,
+    /** Empty rows cut off the top of the image (see [CaveTileRenderer]): the image starts this many pixels lower. */
+    val cropTop: Int = 0,
 ) : AutoCloseable {
     val width: Int get() = image.width
     val height: Int get() = image.height
@@ -61,7 +63,7 @@ class ChunkTile(
 
     /** Iso coordinates of the image's top-left corner when drawn at [pos]. */
     fun originU(pos: ChunkPos) = if (flat) 32.0 * pos.x else 16.0 * (pos.x - pos.z) - 16
-    fun originV(pos: ChunkPos, hs: Double) = if (flat) 32.0 * pos.z else 8.0 * (pos.x + pos.z) - (maxHeight + 1) * hs
+    fun originV(pos: ChunkPos, hs: Double) = if (flat) 32.0 * pos.z else 8.0 * (pos.x + pos.z) - (maxHeight + 1) * hs + cropTop.toDouble() / lod
 
     /** True when the pixel at ([px], [py]) belongs to this chunk (pixel-exact picking). */
     fun hit(px: Int, py: Int) = px in 0 until width && py in 0 until height && mask[py * width + px]

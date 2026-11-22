@@ -8,6 +8,7 @@ import minecartographer.textures.BlockModelSource
 import minecartographer.textures.Dir
 import minecartographer.textures.Quad
 import minecartographer.textures.Texture
+import kotlin.math.ceil
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -91,5 +92,20 @@ class CaveTileRendererTest {
         // And in the isometric view, where the faces without a texture of their own fall back to the block's color.
         val iso = assertNotNull(CaveTileRenderer.render(chunk(), 2, RenderSettings(cave = true), models, turns = 1).pixels)
         assertTrue(iso.count { alpha(it) == 255 } > 100)
+    }
+
+    @Test
+    fun `cave tiles lose their empty rows but stay where they were drawn`() {
+        for (lod in listOf(1, 2, 8)) {
+            val tile = CaveTileRenderer.render(chunk(), lod, RenderSettings(cave = true))
+            val full = ceil((16 + 32 * 1.0) * lod).toInt() + 1
+            assertTrue(tile.cropTop > 0 && tile.height < full, "lod $lod: cropped ${tile.cropTop}, ${tile.height} of $full rows")
+            // The middle of the cave floor's top, block (7, 4, 7), seen through the ground.
+            val u = IsoView.u(7.5, 7.5)
+            val v = IsoView.v(7.5, 5.0, 7.5, 1.0)
+            val px = ((u - tile.originU(ChunkPos(0, 0))) * lod).toInt()
+            val py = ((v - tile.originV(ChunkPos(0, 0), 1.0)) * lod).toInt()
+            assertTrue(tile.hit(px, py), "lod $lod: the floor is at its place, pixel $px $py of ${tile.width} x ${tile.height}")
+        }
     }
 }

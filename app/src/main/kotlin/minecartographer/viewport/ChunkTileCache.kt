@@ -79,6 +79,9 @@ class ChunkTileCache(
     private val wakeUp = Channel<Unit>(Channel.CONFLATED)
     private var epoch = 0
 
+    /** How many bytes of tiles are kept: a screen's tiles must fit in it (see [LodBudget]). */
+    val tileBudget: Long get() = maxBytes
+
     /** Incremented whenever a tile arrives; read it while drawing to redraw on new tiles. */
     var generation by mutableIntStateOf(0)
         private set

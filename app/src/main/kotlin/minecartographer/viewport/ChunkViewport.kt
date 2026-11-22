@@ -158,6 +158,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
     val tilePaint = remember { SkPaint() }
     val tints = remember { HashMap<Color, SkColorFilter>() }
     val prefetch = remember { PrefetchTracker() }
+    val budget = remember { LodBudget() }
     val measurer = rememberTextMeasurer()
     val markerLabels = remember { HashMap<String, TextLayoutResult>() }
     var drag by remember { mutableStateOf(Drag.None) }
@@ -382,7 +383,8 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
         val hovered = state.hovered
         val layerColors = state.showLayerColors
         val hs = state.renderSettings.heightScale.toDouble()
-        val lod = IsoView.lodFor(view.zoom)
+        // Finer tiles than the cache can hold for a whole screen would push each other out without end.
+        val lod = budget.lodFor(IsoView.lodFor(view.zoom))
         val anchor = state.pasteAnchor
         val ghosts: Map<ChunkPos, ChunkRef> =
             if (state.pasteMode && anchor != null) state.clipboard?.placedAt(anchor).orEmpty() else emptyMap()
@@ -430,6 +432,8 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                 if (tile == null) {
                     if (!erased && !state.tiles.isBlank(drawWorld.id, drawPos)) {
                         complete = false
+                        // Every tile asked for counts: the blocks of the zoomed-out view ask for some just off screen too.
+                        budget.missing()
                         if (visible) {
                             tilesTotal++
                             tilesMissing++
@@ -438,6 +442,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                     }
                     continue
                 }
+                if (!erased) budget.add(tile)
                 if (visible && !erased) tilesTotal++
                 if (tile.lod != lod || tile.pixels == null) complete = false
                 val originU = tile.originU(viewPos)
@@ -485,6 +490,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
             }
         }
         state.tiles.endFrame()
+        budget.endFrame(state.tiles.tileBudget)
 
         // Placeholders go underneath: they are flat and only shown until the real tile arrives.
         drawPath(placeholders, EditorTheme.placeholder)

@@ -339,17 +339,34 @@ object CaveTileRenderer {
         return tile(blocks, pixels, size, size, lod, blocks.maxY + 1, flat = true)
     }
 
+    /**
+     * The tile of [pixels]. A cave tile spans the whole depth of the chunk, but caves fill only part of it: in the
+     * isometric view the empty rows above and below are cut off, which more than halves the memory a screen of them takes.
+     */
     private fun tile(blocks: ChunkBlocks, pixels: IntArray, width: Int, height: Int, lod: Int, top: Int, flat: Boolean): ChunkTile {
-        val mask = BitSet(pixels.size)
-        for (i in pixels.indices) if (pixels[i] ushr 24 != 0) mask.set(i)
+        var first = 0
+        var last = height - 1
+        if (!flat) {
+            fun empty(row: Int): Boolean {
+                for (i in row * width until (row + 1) * width) if (pixels[i] ushr 24 != 0) return false
+                return true
+            }
+            while (first < height - 1 && empty(first)) first++
+            while (last > first && empty(last)) last--
+        }
+        val rows = last - first + 1
+        val kept = if (rows == height) pixels else pixels.copyOfRange(first * width, (last + 1) * width)
+        val mask = BitSet(kept.size)
+        for (i in kept.indices) if (kept[i] ushr 24 != 0) mask.set(i)
         return ChunkTile(
             lod = lod,
-            image = imageOf(pixels, width, height),
+            image = imageOf(kept, width, rows),
             minHeight = blocks.minY,
             maxHeight = top - 1,
             mask = mask,
-            pixels = if (lod <= ChunkTileCache.MAX_BLOCK_LOD) pixels else null,
+            pixels = if (lod <= ChunkTileCache.MAX_BLOCK_LOD) kept else null,
             flat = flat,
+            cropTop = first,
         )
     }
 }
