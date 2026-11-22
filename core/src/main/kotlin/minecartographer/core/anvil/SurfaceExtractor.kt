@@ -38,10 +38,11 @@ object SurfaceExtractor {
      */
     private class Section(val y: Int, val states: Array<BlockState>, unpack: (() -> IntArray)?) {
         private val indices by lazy(LazyThreadSafetyMode.NONE) { unpack?.invoke() }
-        val looks = Array(states.size) { BlockColors.look(states[it]) }
+        // Only when asked: looking a block up makes a modded one wanted by the color learner (see [lowestTop]).
+        val looks by lazy(LazyThreadSafetyMode.NONE) { Array(states.size) { BlockColors.look(states[it]) } }
         fun index(x: Int, y: Int, z: Int): Int = if (states.size == 1) 0 else indices!![(y shl 8) or (z shl 4) or x]
         fun look(x: Int, y: Int, z: Int): BlockLook = looks[index(x, y, z)]
-        val allSkip = looks.all { it.kind == BlockKind.SKIP }
+        val allSkip: Boolean get() = looks.all { it.kind == BlockKind.SKIP }
         val allAir = states.all { it.isAir }
     }
 
@@ -59,6 +60,28 @@ object SurfaceExtractor {
         return counts
     }
 
+    /**
+     * The lowest of the chunk's column tops: the highest block of each column that isn't air, plants included.
+     * Null for chunks that aren't fully generated or hold nothing. Quicker than [extract] and it looks no colors up:
+     * it is read for the chunks around one (see [AnvilWorld.loadBlocks]), which may never be drawn.
+     */
+    fun lowestTop(root: CompoundTag, legacy: LegacyMapping = LegacyMapping.VANILLA): Int? {
+        val sections = decode(root, legacy)?.filterNot { it.allAir } ?: return null
+        var lowest = Int.MAX_VALUE
+        // Highest section first: a column is done at its first block, mostly in the top section or two.
+        for (i in 0 until 256) {
+            val x = i and 15
+            val z = i shr 4
+            column@ for (s in sections) {
+                for (y in 15 downTo 0) if (!s.states[s.index(x, y, z)].isAir) {
+                    lowest = minOf(lowest, s.y * 16 + y)
+                    break@column
+                }
+            }
+        }
+        return lowest.takeIf { it != Int.MAX_VALUE }
+    }
+
     /** [legacy] names numeric block ids (before 1.13); worlds with mods bring their own table. */
     fun extract(root: CompoundTag, pos: ChunkPos, legacy: LegacyMapping = LegacyMapping.VANILLA): ChunkSurface? {
         val sections = decode(root, legacy)?.filterNot { it.allSkip } ?: return null
@@ -70,15 +93,23 @@ object SurfaceExtractor {
      * The blocks that can be seen from above: everything from one block below the lowest surface point
      * (the top solid or water block of a column) up to the highest non-air block. With [deep], everything
      * below is kept too, down to the lowest section with blocks in it: that is where the caves are.
+     *
+     * [floor] keeps the blocks down to that height too, when it is lower: what can be seen from the side, under
+     * overhangs and on the walls of cliffs, down to the ground around the chunk (see [AnvilWorld.loadBlocks]).
+     * [onLowestTop] is told the chunk's lowest surface point, before the floor is applied.
      */
-    fun extractBlocks(root: CompoundTag, pos: ChunkPos, legacy: LegacyMapping = LegacyMapping.VANILLA, deep: Boolean = false): ChunkBlocks? {
+    fun extractBlocks(
+        root: CompoundTag, pos: ChunkPos, legacy: LegacyMapping = LegacyMapping.VANILLA, deep: Boolean = false,
+        floor: Int? = null, onLowestTop: (Int) -> Unit = {},
+    ): ChunkBlocks? {
         val sections = decode(root, legacy)?.filterNot { it.allAir } ?: return null
         val solid = sections.filterNot { it.allSkip }
         if (solid.isEmpty()) return null
         val waterDepth = ByteArray(256)
         val surface = scan(pos, solid, waterDepth) ?: return null
 
-        val minY = if (deep) sections.last().y * 16 else maxOf(surface.minHeight - 1, sections.last().y * 16)
+        onLowestTop(surface.minHeight)
+        val minY = if (deep) sections.last().y * 16 else maxOf(minOf(surface.minHeight - 1, floor ?: Int.MAX_VALUE), sections.last().y * 16)
         var maxY = surface.maxHeight
         top@ for (section in sections) { // highest first
             for (y in 15 downTo 0) {

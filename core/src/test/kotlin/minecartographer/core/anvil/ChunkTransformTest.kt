@@ -189,6 +189,41 @@ class ChunkTransformTest {
         }
     }
 
+    @Test
+    fun `a chunk under a roof keeps its blocks down to the ground around it`(@TempDir tmp: Path) {
+        // Chunk (1, 1) is covered by a roof at 100 over a floor at 60; around it the ground is at 60 in the open.
+        val roofed = ChunkPos(1, 1)
+        val chunks = HashMap<ChunkPos, CompoundTag>()
+        for (x in 0..2) for (z in 0..2) {
+            val pos = ChunkPos(x, z)
+            chunks[pos] = chunk(pos) { _, y, _ ->
+                when {
+                    y <= 60 -> entry("minecraft:stone")
+                    pos == roofed && y == 100 -> entry("minecraft:white_wool")
+                    pos == roofed && y in 61..62 -> entry("minecraft:oak_fence")
+                    else -> null
+                }
+            }
+        }
+        // Alone, without the chunks around it, only the roof is seen from above.
+        assertEquals(99, ChunkTransform.chunk(chunks.getValue(roofed), roofed, null, roofed, 0, 0, null)
+            .let { SurfaceExtractor.extractBlocks(it, roofed) }!!.minY)
+        val world = world1204(tmp, chunks)
+        try {
+            val blocks = world.loadBlocks(roofed)!!
+            assertEquals(58, blocks.minY, "down to two below the ground around it (its top may be a plant)")
+            assertEquals("minecraft:oak_fence", blocks.state(4, 61, 4).name, "what stands under the roof")
+            assertEquals("minecraft:white_wool", blocks.state(4, 100, 4).name)
+            // A chunk at the edge only has neighbors on some sides; its own ground is 60 too.
+            assertEquals(58, world.loadBlocks(ChunkPos(0, 0))!!.minY)
+            // Read again (the chunks around were kept after being read for their tops): the same.
+            assertEquals(58, world.loadBlocks(ChunkPos(2, 1))!!.minY)
+            assertEquals(blocks.maxY, world.loadBlocks(roofed)!!.maxY)
+        } finally {
+            world.close()
+        }
+    }
+
     /** A 1.20.4 world in [tmp] with [chunks] in its region r.0.0. */
     private fun world1204(tmp: Path, chunks: Map<ChunkPos, CompoundTag>): AnvilWorld {
         RegionWriter.write(tmp.resolve("region").resolve(RegionFile.fileName(0, 0)), chunks.mapValues { RawChunk.of(it.value) })

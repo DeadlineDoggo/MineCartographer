@@ -6,6 +6,7 @@ import minecartographer.core.ChunkBounds
 import minecartographer.core.ChunkPos
 import minecartographer.core.ChunkSurface
 import minecartographer.core.WorldSource
+import minecartographer.core.nbt.CompoundTag
 import minecartographer.core.nbt.Nbt
 import java.io.IOException
 import java.nio.file.Files
@@ -91,18 +92,74 @@ class AnvilWorld private constructor(
     override fun hasChunk(pos: ChunkPos) = present[regionKey(pos.regionX, pos.regionZ)]?.get(RegionFile.index(pos)) == true
 
     override fun loadSurface(pos: ChunkPos): ChunkSurface? {
-        val raw = readChunk(pos) ?: return null
-        return SurfaceExtractor.extract(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos, legacy)
+        val root = chunkNbt(pos) ?: return null
+        return SurfaceExtractor.extract(root, pos, legacy)?.also { lowestTops.putIfAbsent(pos, it.minHeight) }
     }
 
+    /**
+     * The chunk's blocks seen from above, and also from the side down to the lowest ground of the chunks around it
+     * (see [groundAround]): under overhangs and floating builds, and on the walls of cliffs and pits, where only the
+     * blocks seen from above would leave the sides unknown.
+     */
     override fun loadBlocks(pos: ChunkPos): ChunkBlocks? {
-        val raw = readChunk(pos) ?: return null
-        return SurfaceExtractor.extractBlocks(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos, legacy)
+        // The ground around first: reading it leaves this chunk's own data ready when it is one of the neighbors read.
+        val ground = groundAround(pos)
+        val root = chunkNbt(pos) ?: return null
+        // Two below: a neighbor's top may be a plant on its ground.
+        return SurfaceExtractor.extractBlocks(root, pos, legacy, floor = ground?.let { it - 2 }) { lowestTops.putIfAbsent(pos, it) }
+    }
+
+    /** The lowest top of each chunk read so far, a chunk's own or one around it; [NO_SURFACE] for chunks with none. */
+    private val lowestTops = ConcurrentHashMap<ChunkPos, Int>()
+
+    /**
+     * Chunks read only for their lowest top, kept for a while: the chunks around the ones being drawn are mostly
+     * drawn next, and then are not read and decompressed twice. A chunk is taken out when it is read for itself.
+     */
+    private val readAhead = object : LinkedHashMap<ChunkPos, CompoundTag>(256, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<ChunkPos, CompoundTag>) = size > READ_AHEAD
+    }
+
+    /** The chunk's NBT, from [readAhead] if it was read for its top, else from its region file; null where there is none. */
+    private fun chunkNbt(pos: ChunkPos): CompoundTag? {
+        synchronized(readAhead) { readAhead.remove(pos) }?.let { return it }
+        return readChunk(pos)?.nbt(SurfaceExtractor.UNUSED_TAGS)
+    }
+
+    /**
+     * The lowest top of the chunk at [pos], read once (other threads asking for it meanwhile wait for that read);
+     * null where there is no chunk or nothing in it.
+     */
+    private fun lowestTop(pos: ChunkPos): Int? {
+        if (!hasChunk(pos)) return null
+        lowestTops[pos]?.let { return it.takeIf { t -> t != NO_SURFACE } }
+        val top = lowestTops.computeIfAbsent(pos) {
+            val root = runCatching { readChunk(pos)?.nbt(SurfaceExtractor.UNUSED_TAGS) }.getOrNull()
+            val top = root?.let { runCatching { SurfaceExtractor.lowestTop(it, legacy) }.getOrNull() }
+            if (root != null && top != null) synchronized(readAhead) { readAhead[pos] = root }
+            top ?: NO_SURFACE
+        }
+        return top.takeIf { it != NO_SURFACE }
+    }
+
+    /**
+     * The lowest ground of the chunks up to [AROUND] chunks from [pos], the chunk itself left out: from it up, the
+     * chunk's sides can be seen through the gaps around it. A look under a roof reaches about as far in as the gap
+     * is high, and the gaps under builds and overhangs are rarely higher than two chunks.
+     */
+    private fun groundAround(pos: ChunkPos): Int? {
+        var lowest: Int? = null
+        for (dx in -AROUND..AROUND) for (dz in -AROUND..AROUND) {
+            if (dx == 0 && dz == 0) continue
+            val top = lowestTop(ChunkPos(pos.x + dx, pos.z + dz)) ?: continue
+            if (lowest == null || top < lowest) lowest = top
+        }
+        return lowest
     }
 
     override fun loadCaves(pos: ChunkPos): ChunkBlocks? {
-        val raw = readChunk(pos) ?: return null
-        return SurfaceExtractor.extractBlocks(raw.nbt(SurfaceExtractor.UNUSED_TAGS), pos, legacy, deep = true)
+        val root = chunkNbt(pos) ?: return null
+        return SurfaceExtractor.extractBlocks(root, pos, legacy, deep = true) { lowestTops.putIfAbsent(pos, it) }
     }
 
     override fun countBlocks(pos: ChunkPos): Map<minecartographer.core.BlockState, Int>? {
@@ -138,11 +195,17 @@ class AnvilWorld private constructor(
         entityRegions.values.forEach { runCatching { it.close() } }
         poiRegions.values.forEach { runCatching { it.close() } }
         regions.clear()
+        synchronized(readAhead) { readAhead.clear() }
         entityRegions.clear()
         poiRegions.clear()
     }
 
     companion object {
+        /** How many chunks around a chunk are looked at for the ground its sides can be seen down to. */
+        private const val AROUND = 2
+        private const val NO_SURFACE = Int.MIN_VALUE
+        /** Chunks kept after being read for their top: a few rings of chunks around the ones being drawn. */
+        private const val READ_AHEAD = 1024
         /** Regions are keyed by their coordinates; ChunkPos hashes well, unlike a packed Long (rx xor rz). */
         private fun regionKey(rx: Int, rz: Int) = ChunkPos(rx, rz)
 
