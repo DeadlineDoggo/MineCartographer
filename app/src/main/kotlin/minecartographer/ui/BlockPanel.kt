@@ -24,7 +24,30 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import minecartographer.core.BlockState
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import minecartographer.editor.EditorState
+import minecartographer.editor.PickedBlock
+import minecartographer.model.ModelCamera
+import minecartographer.model.ModelQuad
+import minecartographer.model.ModelRenderer
+import minecartographer.textures.BlockModelSource
+import minecartographer.textures.FlatModels
+import minecartographer.viewport.imageOf
 import minecartographer.editor.Tool
 
 /** The Block dock: the block picked on the map with the Inspect block tool. */
@@ -41,6 +64,8 @@ fun BlockPanel(state: EditorState) {
             }
             return@Column
         }
+        BlockPreview(state, picked)
+        Spacer(Modifier.height(10.dp))
         BlockTitle(picked.state)
         val properties = picked.state.properties.takeIf { picked.state.name != BlockState.COLOR_BLOCK }.orEmpty()
         if (properties.isNotEmpty()) {
@@ -86,4 +111,45 @@ private fun BlockTitle(state: BlockState) {
     }
     Txt(state.path, weight = FontWeight.SemiBold, size = 14.sp, maxLines = 2)
     Txt(state.name.substringBefore(':'), color = EditorTheme.textDim, size = 11.sp, mono = true)
+}
+
+/**
+ * The picked block up close: its model with the world's textures (map colors until they are loaded), drawn by the
+ * model editor's renderer from above at an angle. Dragging sideways turns it.
+ */
+@Composable
+private fun BlockPreview(state: EditorState, picked: PickedBlock) {
+    // Read while composing: the preview is drawn again once the world's textures arrive.
+    val textured = state.modelsOf(picked.world)
+    val models: BlockModelSource = textured ?: FlatModels
+    val quads by produceState<List<ModelQuad>?>(null, models, picked.state) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { models.model(picked.state, 0).quads.map { ModelQuad(0, 0, it) } }.getOrNull()
+        }
+    }
+    var yaw by remember { mutableFloatStateOf(ModelCamera.ISO.yaw) }
+    var size by remember { mutableStateOf(IntSize.Zero) }
+    val bitmap = remember(quads, yaw, size) {
+        val list = quads
+        if (list.isNullOrEmpty() || size.width < 2 || size.height < 2) null else {
+            // A block is 16 units; turned and seen from above it spans about 25 of them.
+            val camera = ModelCamera.ISO.copy(yaw = yaw, zoom = minOf(size.width, size.height) / 28f)
+            val frame = ModelRenderer.render(list, camera, size.width, size.height)
+            imageOf(frame.pixels, frame.width, frame.height).toComposeImageBitmap()
+        }
+    }
+    val shape = RoundedCornerShape(6.dp)
+    Box(
+        Modifier.fillMaxWidth().height(170.dp).clip(shape).background(EditorTheme.viewportBackground)
+            .border(1.dp, EditorTheme.border, shape)
+            .onSizeChanged { size = it }
+            .pointerInput(Unit) { detectDragGestures { _, drag -> yaw += drag.x * 0.6f } },
+        contentAlignment = Alignment.Center,
+    ) {
+        val image = bitmap
+        if (image != null) Image(image, picked.state.name, Modifier.fillMaxSize(), filterQuality = FilterQuality.None)
+        else if (quads != null) Txt("Nothing to draw for this block", color = EditorTheme.textFaint, size = 11.sp)
+    }
+    Txt(if (textured != null) "Drag to turn it." else "Map colors: the textures show in the Textured mode (3) once loaded. Drag to turn it.",
+        Modifier.padding(top = 4.dp), color = EditorTheme.textFaint, size = 11.sp, maxLines = 3)
 }
