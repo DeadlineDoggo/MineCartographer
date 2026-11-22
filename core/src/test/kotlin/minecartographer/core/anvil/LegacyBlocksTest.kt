@@ -28,4 +28,18 @@ class LegacyBlocksTest {
         assertEquals("minecartographer:unknown", state.name)
         assertEquals(BlockKind.SOLID, BlockColors.look(state).kind)
     }
+
+    @Test
+    fun `states go back to their numbers, modded ones with their meta`() {
+        val mapping = LegacyMapping(mapOf(2001 to "extrabiomesxl:leavesfir"))
+        assertEquals(5 to 1, mapping.idOf(LegacyBlocks.state(5, 1)))
+        assertEquals(35 to 14, mapping.idOf(LegacyBlocks.state(35, 14)))
+        assertEquals(1 to 0, mapping.idOf(BlockState.of("stone")))
+        assertEquals(2001 to 3, mapping.idOf(mapping.state(2001, 3)))
+        for (id in 1 until 160) for (data in 0 until 16) {
+            val state = LegacyBlocks.state(id, data)
+            assertEquals(state, mapping.idOf(state)?.let { (i, d) -> LegacyBlocks.state(i, d) }, "$id:$data")
+        }
+        assertEquals(null, mapping.idOf(BlockState.of("minecraft:copper_block")), "no number gives a block newer than 1.13")
+    }
 }

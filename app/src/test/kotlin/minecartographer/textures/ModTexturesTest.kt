@@ -88,6 +88,33 @@ class ModTexturesTest {
     }
 
     @Test
+    fun `a block lists the textures it is drawn with and the archive of each`() {
+        val mod = zip(
+            "mod.jar",
+            "assets/m/blockstates/fir_log.json" to """{"variants": {"axis=y": {"model": "m:block/fir_log"}}}""",
+            "assets/m/models/block/fir_log.json" to """{"parent": "m:block/column", "textures": {"end": "m:block/fir_log_top", "side": "m:block/fir_log", "particle": "#side"}}""",
+            "assets/m/models/block/column.json" to """{"textures": {"up": "#end", "down": "#end"}, "elements": []}""",
+            "assets/m/textures/block/fir_log_top.png" to png(0xC08040),
+            "assets/m/textures/block/fir_log.png" to png(0x402010),
+            // Multipart: the post and one side piece apply.
+            "assets/m/blockstates/wall.json" to """{"multipart": [{"apply": {"model": "m:block/post"}}, {"when": {"north": "true"}, "apply": {"model": "m:block/side"}}]}""",
+            "assets/m/models/block/post.json" to """{"textures": {"all": "m:block/fir_log"}, "elements": []}""",
+            "assets/m/models/block/side.json" to """{"textures": {"all": "m:block/missing"}, "elements": []}""",
+        )
+        AssetSource(listOf(mod)).use { assets ->
+            val models = BlockModels(assets)
+            val log = models.textureUses(BlockState.of("m:fir_log", mapOf("axis" to "y")))
+            assertEquals(setOf("m:block/fir_log_top", "m:block/fir_log"), log.map { it.id }.toSet())
+            assertEquals(setOf("end", "up", "down"), log.first { it.id == "m:block/fir_log_top" }.names.toSet())
+            assertEquals(setOf("side", "particle"), log.first { it.id == "m:block/fir_log" }.names.toSet())
+            assertEquals("mod.jar", models.archiveOf("m:block/fir_log"))
+            // A texture the archives don't have is left out.
+            assertEquals(listOf("m:block/fir_log"), models.textureUses(BlockState.of("m:wall", mapOf("north" to "true"))).map { it.id })
+            assertTrue(models.textureUses(BlockState.of("m:nothing")).isEmpty())
+        }
+    }
+
+    @Test
     fun `Forge blockstates pick the variant from the data value and override textures`() {
         // Like Immersive Engineering's ore: one block, the data value picks the ore in the order the file lists them.
         val mod = zip(

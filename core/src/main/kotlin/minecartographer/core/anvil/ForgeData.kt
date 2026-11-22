@@ -130,6 +130,23 @@ class LegacyMapping(private val modded: Map<Int, String>) {
         return BlockState.of(name, mapOf("meta" to (data and 15).toString())).also { cache[key] = it }
     }
 
+    /** Vanilla states back to the first (id, data) giving them; built on first use. */
+    private val vanillaIds: Map<BlockState, Pair<Int, Int>> by lazy {
+        HashMap<BlockState, Pair<Int, Int>>().also { ids ->
+            for (id in 0 until 256) for (data in 0 until 16) ids.putIfAbsent(LegacyBlocks.state(id, data), id to data)
+        }
+    }
+    private val moddedIds: Map<String, Int> by lazy { modded.entries.associate { (id, name) -> name to id } }
+
+    /**
+     * The numeric id and data value [state] is stored as (the reverse of [state]); null for states no number gives,
+     * like a modern block in an old world. Several numbers can give the same state: the first is returned.
+     */
+    fun idOf(state: BlockState): Pair<Int, Int>? {
+        moddedIds[state.name]?.let { id -> return id to (state.properties["meta"]?.toIntOrNull() ?: 0) }
+        return vanillaIds[state]
+    }
+
     companion object {
         /** Worlds without modded ids. */
         val VANILLA = LegacyMapping(emptyMap())

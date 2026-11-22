@@ -449,6 +449,42 @@ class BlockModels(val assets: AssetSource, val cache: PackCache? = null) : Block
         return BlockInfo(Source.GUESS, choice.top, choice.source)
     }
 
+    /** A texture a block is drawn with: its [id] and the names the block's models give it (`top`, `side`, `all`...). */
+    data class TextureUse(val id: String, val names: List<String>)
+
+    /**
+     * The textures [state] is drawn with, in the order its models name them: from the blockstate's models (every
+     * multipart piece that applies), or the top and side of the user's choice or the guess for blocks without one.
+     * Only textures the packs have are listed; empty when none is known.
+     */
+    fun textureUses(state: BlockState): List<TextureUse> {
+        val (ns, path) = split(state.name)
+        val byId = LinkedHashMap<String, MutableList<String>>()
+        fun add(name: String, id: String?) {
+            if (id != null && texture(id) != null) byId.getOrPut(id) { ArrayList() }.let { if (name !in it) it += name }
+        }
+        val overridden = isOverridden(BlockColors.keyOf(state.name, state.properties["meta"] ?: "0")) || overrides.containsKey(state.name)
+        val json = if (overridden) null else blockstate(ns, path)
+        if (json == null) {
+            textureChoice(state)?.let { add("top", it.top); add("side", it.side) }
+            return byId.map { (id, names) -> TextureUse(id, names) }
+        }
+        for (part in parts(expandMeta(state, json), json, firstOnly = false)) {
+            val resolved = part.model?.let { resolve(it) } ?: continue
+            val model = ResolvedModel(resolved.textures + part.textures, null)
+            for (name in model.textures.keys) add(name, resolveTextureId(model, "#$name"))
+        }
+        // Forge blockstates may name textures inline only.
+        if (byId.isEmpty()) textureNames(json).forEach { add("texture", it) }
+        return byId.map { (id, names) -> TextureUse(id, names) }
+    }
+
+    /** The file name of the archive (client jar, mod jar or pack) the texture [id] is read from; null if none has it. */
+    fun archiveOf(id: String): String? {
+        val (ns, path) = split(id.substringBefore('#'))
+        return assets.index["assets/$ns/textures/$path.png"]?.let { assets.files[it].fileName.toString() }
+    }
+
     /** The mod id a 1.6 block belongs to as level.dat says it (`TConstruct`), if it was registered. */
     fun legacyModId(name: String): String? = legacyBlocks[name]?.first?.modId
 

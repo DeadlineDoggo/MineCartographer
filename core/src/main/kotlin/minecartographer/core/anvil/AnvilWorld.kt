@@ -1,5 +1,6 @@
 package minecartographer.core.anvil
 
+import minecartographer.core.BlockState
 import minecartographer.core.ChunkBlocks
 import minecartographer.core.ChunkBounds
 import minecartographer.core.ChunkPos
@@ -77,6 +78,10 @@ class AnvilWorld private constructor(
 
     /** Numeric block ids (before 1.13) to states, including this world's modded ids. */
     internal val legacy = info.forge?.legacyMapping() ?: LegacyMapping.VANILLA
+
+    /** The numeric id and data value [state] is stored as in this world; null from 1.13 on, where chunks store names. */
+    fun legacyIdOf(state: BlockState): Pair<Int, Int>? =
+        if ((dataVersion ?: 0) >= SurfaceExtractor.DV_FLATTENING) null else legacy.idOf(state)
 
     /** Region files stay open while the world is open; reads on them are thread-safe. */
     private val regions = ConcurrentHashMap<ChunkPos, RegionFile>()

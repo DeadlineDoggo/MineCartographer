@@ -23,7 +23,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.clickable
 import minecartographer.core.BlockState
+import minecartographer.core.anvil.AnvilWorld
+import minecartographer.core.anvil.BlockColors
+import minecartographer.core.anvil.BlockKind
+import minecartographer.textures.BlockModels
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Box
@@ -66,12 +71,13 @@ fun BlockPanel(state: EditorState) {
         }
         BlockPreview(state, picked)
         Spacer(Modifier.height(10.dp))
-        BlockTitle(picked.state)
+        BlockTitle(picked.state, (picked.origin.world as? AnvilWorld)?.legacyIdOf(picked.state))
         val properties = picked.state.properties.takeIf { picked.state.name != BlockState.COLOR_BLOCK }.orEmpty()
         if (properties.isNotEmpty()) {
             SectionHeader("PROPERTIES")
             for ((key, value) in properties.toSortedMap()) KeyValue(key, value)
         }
+        if (picked.state.name != BlockState.COLOR_BLOCK) Look(state, picked)
 
         SectionHeader("POSITION")
         KeyValue("X Y Z", picked.coords)
@@ -116,9 +122,12 @@ private fun Origin(picked: PickedBlock) {
 
 private fun regionFile(chunk: minecartographer.core.ChunkPos) = "r.${chunk.x shr 5}.${chunk.z shr 5}.mca"
 
-/** The block's name, large, with its namespace (the mod) under it; demo terrain shows its color instead. */
+/**
+ * The block's name, large, with its namespace (the mod) under it and, in worlds before 1.13, the [legacyId] (id and
+ * data value) it is stored as; demo terrain shows its color instead.
+ */
 @Composable
-private fun BlockTitle(state: BlockState) {
+private fun BlockTitle(state: BlockState, legacyId: Pair<Int, Int>?) {
     if (state.name == BlockState.COLOR_BLOCK) {
         val rgb = state.properties["rgb"]?.toIntOrNull(16) ?: 0
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -133,7 +142,87 @@ private fun BlockTitle(state: BlockState) {
         return
     }
     Txt(state.path, weight = FontWeight.SemiBold, size = 14.sp, maxLines = 2)
-    Txt(state.name.substringBefore(':'), color = EditorTheme.textDim, size = 11.sp, mono = true)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Txt(state.name.substringBefore(':'), color = EditorTheme.textDim, size = 11.sp, mono = true)
+        if (legacyId != null) WithTooltip("Stored in the chunk as block id ${legacyId.first}, data value ${legacyId.second}") {
+            Txt("${legacyId.first}:${legacyId.second}", Modifier.padding(start = 8.dp).clip(RoundedCornerShape(3.dp))
+                .background(EditorTheme.window).padding(horizontal = 6.dp, vertical = 1.dp), color = EditorTheme.textDim, size = 11.sp, mono = true)
+        }
+    }
+}
+
+/** The pack the block's textures come from: the one of the world it was read from (as the map draws it), else this world's. */
+private fun modelsFor(state: EditorState, picked: PickedBlock): BlockModels? =
+    state.modelsOf(picked.ref.world) ?: state.modelsOf(picked.world)
+
+/**
+ * How the block looks: its color on the map, the mod it comes from, where its look is taken from and the textures
+ * it is drawn with (click one to copy its id), with the archive each comes from.
+ */
+@Composable
+private fun Look(state: EditorState, picked: PickedBlock) {
+    val block = picked.state
+    val models = modelsFor(state, picked)
+    val ns = block.name.substringBefore(':')
+    SectionHeader("LOOK")
+    val look = BlockColors.look(block)
+    Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+        Txt("Map color", Modifier.weight(1f), color = EditorTheme.textDim, size = 12.sp)
+        if (look.kind == BlockKind.SKIP) Txt("not drawn, the block below shows", size = 12.sp)
+        else {
+            Spacer(Modifier.size(12.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF000000.toInt() or look.color))
+                .border(1.dp, EditorTheme.border, RoundedCornerShape(2.dp)))
+            Txt((if (look.kind == BlockKind.WATER) "water, by depth" else "#%06X".format(look.color and 0xFFFFFF)),
+                Modifier.padding(start = 6.dp), size = 12.sp, mono = true)
+        }
+    }
+    if (ns != "minecraft") KeyValue("Mod", modOf(picked, ns, models))
+    if (models == null) {
+        Txt("Load this world's textures (the Textured mode, 3) to see which ones the block is drawn with.",
+            Modifier.padding(top = 4.dp), color = EditorTheme.textFaint, size = 11.sp, maxLines = 3)
+        return
+    }
+    val details by produceState<Pair<BlockModels.BlockInfo?, List<BlockModels.TextureUse>>?>(null, models, block) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { models.info(block) }.getOrNull() to runCatching { models.textureUses(block) }.getOrDefault(emptyList())
+        }
+    }
+    val (info, uses) = details ?: return
+    if (info != null) KeyValue("Look from", info.source.label)
+    if (uses.isEmpty()) {
+        Txt(if (info?.source == BlockModels.Source.UNKNOWN) "No texture found: the map color is guessed from the name." else "No textures: the game draws this block in code.",
+            Modifier.padding(top = 4.dp), color = EditorTheme.textFaint, size = 11.sp, maxLines = 3)
+        return
+    }
+    SectionHeader("TEXTURES")
+    val thumbs = rememberThumbs()(models)
+    for (use in uses) {
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp)).clickable { state.copyText(use.id) }.padding(vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (thumbs != null) Thumb(thumbs, use.id, null, 32.dp)
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Txt(use.id.removePrefix("minecraft:"), size = 11.sp, mono = true, maxLines = 2)
+                Txt(use.names.joinToString(", ") + (models.archiveOf(use.id)?.let { " · $it" } ?: ""),
+                    color = EditorTheme.textFaint, size = 10.sp, maxLines = 2)
+            }
+        }
+    }
+}
+
+/** The mod of namespace [ns]: as the world's level.dat lists it (with its version), else the namespace itself. */
+private fun modOf(picked: PickedBlock, ns: String, models: BlockModels?): String {
+    if (ns == "minecartographer") return "MineCartographer (demo)"
+    val forge = (picked.origin.world as? AnvilWorld)?.info?.forge
+    val id = models?.legacyModId(picked.state.name) ?: ns
+    val mod = forge?.playedMods?.firstOrNull { it.id.equals(id, ignoreCase = true) || it.id.equals(ns, ignoreCase = true) }
+    return when {
+        mod == null -> ns
+        mod.version.isBlank() -> mod.id
+        else -> "${mod.id} ${mod.version}"
+    }
 }
 
 /**
@@ -143,7 +232,7 @@ private fun BlockTitle(state: BlockState) {
 @Composable
 private fun BlockPreview(state: EditorState, picked: PickedBlock) {
     // Read while composing: the preview is drawn again once the world's textures arrive.
-    val textured = state.modelsOf(picked.world)
+    val textured = modelsFor(state, picked)
     val models: BlockModelSource = textured ?: FlatModels
     val quads by produceState<List<ModelQuad>?>(null, models, picked.state) {
         value = withContext(Dispatchers.IO) {
