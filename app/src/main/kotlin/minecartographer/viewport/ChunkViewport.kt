@@ -274,7 +274,7 @@ fun ChunkViewport(state: EditorState, modifier: Modifier = Modifier) {
                                     }
                                     !b.isPrimaryPressed -> Drag.None
                                     state.placingWaypoint -> {
-                                        state.placeWaypointAt(p.x, p.y, w, h)
+                                        state.placeWaypointAt(p.x, p.y, w, h, hit)
                                         Drag.None
                                     }
                                     state.pasteMode -> {

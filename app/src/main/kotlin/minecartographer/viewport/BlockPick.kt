@@ -27,11 +27,29 @@ object BlockPick {
      * they were read from). [rotation] is the view's turn, [hs] the height scale. Blocks of other chunks are not
      * looked at: the caller already knows from the drawn tiles which chunk is seen there. Null when the line passes
      * through the chunk without meeting a block.
+     *
+     * With [cave], what the Cave view draws there (see [CaveTileRenderer]): the line goes through the ground, and once
+     * it is in a cave (air under the column's roof) the first solid block it meets. Where it finds no cave, the first
+     * solid block, the ground the Cave view may show as a faint trace.
      */
-    fun inChunk(blocks: ChunkBlocks, pos: ChunkPos, view: IsoView, hs: Double, rotation: Int, u: Double, v: Double): BlockHit? {
+    fun inChunk(blocks: ChunkBlocks, pos: ChunkPos, view: IsoView, hs: Double, rotation: Int, u: Double, v: Double, cave: Boolean = false): BlockHit? {
         val x0 = pos.x * 16
         val z0 = pos.z * 16
         val unrotate = 4 - rotation
+        val roofs = IntArray(256) { Int.MIN_VALUE }
+        // The column's highest ground block (trees are no roof), as the Cave view finds it.
+        fun roof(lx: Int, lz: Int): Int {
+            val i = lz * 16 + lx
+            if (roofs[i] == Int.MIN_VALUE) {
+                var y = blocks.maxY
+                while (y >= blocks.minY && blocks.state(lx, y, lz).let { !caveSolid(it) || caveGrowth(it) }) y--
+                roofs[i] = y
+            }
+            return roofs[i]
+        }
+        var ground: BlockHit? = null
+        var inCave = false
+        // The answer once the block at (vx, y, vz) in view space is met, or null to go on.
         fun at(vx: Double, vz: Double, y: Int): BlockHit? {
             val (wx, wz) = Rotation.point(unrotate, vx, vz)
             val bx = floor(wx).toInt()
@@ -40,13 +58,18 @@ object BlockPick {
             val lz = bz - z0
             if (lx !in 0..15 || lz !in 0..15) return null
             val state = blocks.state(lx, y, lz)
-            return if (state.isAir) null else BlockHit(bx, y, bz, state)
+            if (!cave) return if (state.isAir) null else BlockHit(bx, y, bz, state)
+            val solid = caveSolid(state)
+            if (inCave) return if (solid) BlockHit(bx, y, bz, state) else null
+            if (solid) { if (ground == null) ground = BlockHit(bx, y, bz, state) }
+            else if (!caveWater(state) && y < roof(lx, lz)) inCave = true
+            return null
         }
         if (view.flat || hs <= 1e-9) {
             // From above: the top block of the column.
             val (vx, vz) = view.ground(u, v, 0.0, hs)
             for (y in blocks.maxY downTo blocks.minY) at(vx, vz, y)?.let { return it }
-            return null
+            return ground
         }
         // Along the line, x = v + y hs + u / 2 and z = v + y hs - u / 2 (view space): the part over the chunk is
         // where both are inside its 16 blocks, walked from the top (nearest the eye) down.
@@ -61,7 +84,7 @@ object BlockPick {
             at(s + u / 2, s - u / 2, floor(y).toInt())?.let { return it }
             y -= STEP
         }
-        return null
+        return ground
     }
 }
 

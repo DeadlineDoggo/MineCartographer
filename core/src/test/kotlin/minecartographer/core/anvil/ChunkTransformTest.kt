@@ -3,6 +3,7 @@ package minecartographer.core.anvil
 import minecartographer.core.BlockRotation
 import minecartographer.core.BlockState
 import minecartographer.core.ChunkPos
+import minecartographer.core.DemoWorld
 import minecartographer.core.edit.ChunkRef
 import minecartographer.core.nbt.CompoundTag
 import minecartographer.core.nbt.Nbt
@@ -98,6 +99,30 @@ class ChunkTransformTest {
         assertEquals("minecraft:stone", blockAt(out, 7, 10, 3).name)
         assertEquals(to.x, out.int("xPos"))
         assertNull(out["Heightmaps"], "the game recomputes them")
+    }
+
+    @Test
+    fun `the origin of every block of a turned, raised and cut chunk is the block it was made from`() {
+        // Every block different: its name tells where it was in the source.
+        fun name(x: Int, y: Int, z: Int) = "test:b_${x}_${y}_$z"
+        val source = chunk(from) { x, y, z -> if (y in 60..69) entry(name(x, y, z)) else null }
+        val under = chunk(to) { _, y, _ -> if (y < 64) entry("minecraft:dirt") else null }
+        for (turns in 0..3) for ((dy, cut) in listOf(0 to null, 5 to null, -3 to 62)) {
+            val ref = ChunkRef(DemoWorld("Source", 1, 1), from, turns, dy, cut)
+            val out = ChunkTransform.chunk(source, from, if (ref.floor != null) under else null, to, turns, dy, ref.floor)
+            for (y in 55..76) for (lz in 0..15) for (lx in 0..15) {
+                val x = to.x * 16 + lx
+                val z = to.z * 16 + lz
+                val shown = blockAt(out, lx, y, lz).name
+                val origin = ref.origin(to, x, y, z)
+                val expected = when {
+                    origin == null -> if (y < 64) "minecraft:dirt" else "minecraft:air"
+                    origin.y in 60..69 -> name(origin.x - from.x * 16, origin.y, origin.z - from.z * 16)
+                    else -> "minecraft:air"
+                }
+                assertEquals(expected, shown, "turns $turns, dy $dy, cut $cut, at $lx $y $lz")
+            }
+        }
     }
 
     @Test

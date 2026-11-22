@@ -77,21 +77,44 @@ fun BlockPanel(state: EditorState) {
         KeyValue("X Y Z", picked.coords)
         KeyValue("Chunk", "${picked.chunk.x}, ${picked.chunk.z}")
         KeyValue("In the chunk", "${picked.x - picked.chunk.x * 16}, ${picked.z - picked.chunk.z * 16}")
+        KeyValue("Section", "${Math.floorDiv(picked.y, 16)}")
+        KeyValue("Region file", regionFile(picked.chunk))
 
-        SectionHeader("SHOWN BY")
+        SectionHeader("COMES FROM")
         KeyValue("Layer", picked.layerName)
-        KeyValue("World", picked.world.name)
+        Origin(picked)
 
         Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             TextButton("Copy coords", Modifier.weight(1f), icon = Icons.Copy) { state.copyText(picked.coords) }
             TextButton("Clear", Modifier.weight(1f)) { state.pickedBlock = null }
         }
-        if (state.renderSettings.cave) {
-            Txt("The cave view shows through the ground, but the block is picked as seen from above.",
-                Modifier.padding(top = 8.dp), color = EditorTheme.warning, size = 11.sp, maxLines = 4)
-        }
     }
 }
+
+/** Where the picked block was read from, and what was done to it on the way: moved, turned, raised, or below a cut. */
+@Composable
+private fun Origin(picked: PickedBlock) {
+    val origin = picked.origin
+    KeyValue("World", origin.world.name)
+    if (picked.belowCut || picked.inPlace) {
+        Txt(if (picked.belowCut) "Below the layer's cut at ${picked.ref.floor}: the original world's own block." else "Its own place in this world.",
+            color = EditorTheme.textFaint, size = 11.sp, maxLines = 3)
+        return
+    }
+    KeyValue("X Y Z there", "${origin.x} ${origin.y} ${origin.z}")
+    KeyValue("Chunk there", "${origin.chunk.x}, ${origin.chunk.z}")
+    KeyValue("Region file there", regionFile(origin.chunk))
+    val ref = picked.ref
+    val changes = buildList {
+        if (ref.pos != picked.chunk || ref.world != picked.world) add("moved from chunk ${ref.pos.x}, ${ref.pos.z}")
+        if (ref.turns != 0) add("turned ${ref.turns * 90}° clockwise")
+        if (ref.dy != 0) add(if (ref.dy > 0) "raised ${ref.dy}" else "lowered ${-ref.dy}")
+    }
+    if (changes.isNotEmpty()) Txt(changes.joinToString(", ").replaceFirstChar { it.uppercase() } + ".",
+        Modifier.padding(top = 4.dp), color = EditorTheme.textDim, size = 11.sp, maxLines = 4)
+}
+
+private fun regionFile(chunk: minecartographer.core.ChunkPos) = "r.${chunk.x shr 5}.${chunk.z shr 5}.mca"
 
 /** The block's name, large, with its namespace (the mod) under it; demo terrain shows its color instead. */
 @Composable

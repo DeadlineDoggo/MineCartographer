@@ -38,6 +38,7 @@ import minecartographer.core.edit.BaseLayer
 import minecartographer.core.edit.ChunkClipboard
 import minecartographer.core.edit.ChunkEdit
 import minecartographer.core.edit.ChunkLayer
+import minecartographer.core.edit.BlockOrigin
 import minecartographer.core.edit.ChunkRef
 import minecartographer.core.edit.Layer
 import minecartographer.core.DemoWorld
@@ -246,21 +247,23 @@ class EditorState {
     var placingWaypoint by mutableStateOf(false)
 
     /**
-     * Places the new waypoint on the block seen at ([sx], [sy]) pixels in a map of [width] x [height]: the top of the
-     * column under the pointer, with its height. Reading the chunks' surfaces may take a moment, so it is done in the
-     * background; where nothing is drawn the waypoint goes to the usual surface height, its height left unknown.
+     * Places the new waypoint on the block seen at ([sx], [sy]) pixels in a map of [width] x [height], where the drawn
+     * tiles show [chunk]: the block the Inspect block tool would pick there (in the Cave view the cave's). Reading the
+     * chunk may take a moment, so it is done in the background. Where no block is found, the top of the column under
+     * the pointer; where nothing is drawn, the usual surface height with the height left unknown.
      */
-    fun placeWaypointAt(sx: Float, sy: Float, width: Float, height: Float) {
+    fun placeWaypointAt(sx: Float, sy: Float, width: Float, height: Float, chunk: ChunkPos? = null) {
         val world = activeWorld ?: return
         val stack = activeStack ?: return
         placingWaypoint = false
+        val find = blockFinder(sx, sy, width, height, chunk)
         val view = view
         val hs = renderSettings.heightScale.toDouble()
         val turn = rotation
         val u = view.screenToU(sx, width)
         val v = view.screenToV(sy, height)
         scope.launch(Dispatchers.IO) {
-            val (x, y, z) = groundUnder(stack, view, hs, turn, u, v)
+            val (x, y, z) = find?.invoke()?.let { Triple(it.x, it.y, it.z) } ?: groundUnder(stack, view, hs, turn, u, v)
             withContext(Dispatchers.Main) { addWaypointAt(world, x, y, z) }
         }
     }
@@ -351,29 +354,34 @@ class EditorState {
         val view = view
         val hs = renderSettings.heightScale.toDouble()
         val turn = rotation
+        val cave = renderSettings.cave
         val u = view.screenToU(sx, width)
         val v = view.screenToV(sy, height)
         return {
-            runCatching { blockSeen(source, chunk, view, hs, turn, u, v) }.getOrNull()
-                ?.let { PickedBlock(world, chunk, it.x, it.y, it.z, it.state, source.layerName) }
+            runCatching { blockSeen(source, chunk, view, hs, turn, u, v, cave) }.getOrNull()
+                ?.let { hit ->
+                    val origin = source.ref.origin(chunk, hit.x, hit.y, hit.z)
+                    PickedBlock(world, chunk, hit.x, hit.y, hit.z, hit.state, source.layerName, source.ref,
+                        origin ?: BlockOrigin(stack.world, hit.x, hit.y, hit.z), belowCut = origin == null)
+                }
         }
     }
 
     /** What the map draws at [chunk]: the world and position its tile comes from, and the layer showing it. */
-    class ShownChunk(val world: WorldSource, val pos: ChunkPos, val layerName: String)
+    class ShownChunk(val world: WorldSource, val pos: ChunkPos, val layerName: String, val ref: ChunkRef)
 
     /** [chunk]'s content as the map draws it (the same source the viewport asks tiles for); null where nothing is drawn. */
     fun shownAt(stack: LayerStack, chunk: ChunkPos): ShownChunk? {
         val layer = stack.layerAt(chunk) ?: return null
         val ref = stack.contentOf(layer, chunk) ?: return null
         val (world, pos) = drawSource(ref, chunk, stack, layer.blockMap)
-        return ShownChunk(world, pos, layer.name)
+        return ShownChunk(world, pos, layer.name, ref)
     }
 
     /** The block seen at the view point ([u], [v]) in [chunk], drawn from [source]. Reads files: call it off the UI thread. */
-    fun blockSeen(source: ShownChunk, chunk: ChunkPos, view: IsoView, hs: Double, turn: Int, u: Double, v: Double): BlockHit? {
-        val blocks = tiles.blocks(source.world, source.pos) ?: return null
-        return BlockPick.inChunk(blocks, chunk, view, hs, turn, u, v)
+    fun blockSeen(source: ShownChunk, chunk: ChunkPos, view: IsoView, hs: Double, turn: Int, u: Double, v: Double, cave: Boolean = false): BlockHit? {
+        val blocks = tiles.blocks(source.world, source.pos, deep = cave) ?: return null
+        return BlockPick.inChunk(blocks, chunk, view, hs, turn, u, v, cave)
     }
 
     /** The block column seen at the view point ([u], [v]): walks down the line of sight until it meets a column at least that high. */
@@ -2044,9 +2052,16 @@ data class AnalyzeRequest(
 
 /**
  * A block picked on the map of [world]: its world position ([x], [y], [z]) in [chunk], the [state] the map shows
- * there and the [layerName] of the layer showing it.
+ * there and the [layerName] of the layer showing it. [ref] is the chunk placed there and [origin] where the block was
+ * read from: [ref]'s world (turned back and lowered), or the original world itself when [belowCut].
  */
-data class PickedBlock(val world: WorldSource, val chunk: ChunkPos, val x: Int, val y: Int, val z: Int, val state: BlockState, val layerName: String) {
+data class PickedBlock(
+    val world: WorldSource, val chunk: ChunkPos, val x: Int, val y: Int, val z: Int, val state: BlockState, val layerName: String,
+    val ref: ChunkRef = ChunkRef(world, chunk), val origin: BlockOrigin = BlockOrigin(world, x, y, z), val belowCut: Boolean = false,
+) {
+    /** True when the block is in its own world at its own place: nothing moved, turned or raised it. */
+    val inPlace: Boolean get() = origin.world == world && origin.x == x && origin.y == y && origin.z == z
+
     val coords: String get() = "$x $y $z"
 
     /** True when [other] is the same block of the same world. */

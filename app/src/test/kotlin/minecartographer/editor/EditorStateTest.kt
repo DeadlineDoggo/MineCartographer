@@ -5,6 +5,7 @@ import minecartographer.core.ChunkPos
 import minecartographer.core.Rotation
 import minecartographer.core.DemoWorld
 import minecartographer.core.edit.BaseLayer
+import minecartographer.core.edit.BlockOrigin
 import minecartographer.core.edit.ChunkLayer
 import minecartographer.core.edit.ChunkRef
 import minecartographer.viewport.IsoView
@@ -211,7 +212,10 @@ class EditorStateTest {
         val x = -4 * 16 + lx
         val z = 6 * 16 + lz
         for (turn in 0..3) assertEquals(Triple(x, top, z), inspect(ChunkPos(-4, 6), x, top, z, turn), "rotation $turn")
-        assertEquals(state.activeStack!!.active.name, state.shownAt(state.activeStack!!, ChunkPos(-4, 6))?.layerName)
+        val shown = state.shownAt(state.activeStack!!, ChunkPos(-4, 6))!!
+        assertEquals(state.activeStack!!.active.name, shown.layerName)
+        // The block comes from the copied chunk in the source world.
+        assertEquals(BlockOrigin(valley, 3 * 16 + lx, top, 2 * 16 + lz), shown.ref.origin(ChunkPos(-4, 6), x, top, z))
     }
 
     @Test

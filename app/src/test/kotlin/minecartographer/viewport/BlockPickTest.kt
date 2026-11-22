@@ -7,6 +7,7 @@ import minecartographer.core.Rotation
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class BlockPickTest {
     private val pos = ChunkPos(2, -3)
@@ -88,5 +89,39 @@ class BlockPickTest {
         // A line of sight that never crosses the chunk: its ground point is far to the side.
         val (fu, fv) = at(pos.x * 16 + 200.5, 11.0, pos.z * 16 - 200.5, 0, 1.0)
         assertNull(BlockPick.inChunk(chunk(), pos, IsoView(), 1.0, 0, fu, fv))
+    }
+
+    /** Stone from 0 to 20 with a closed cave of air at 5..8 over local 4..11 on both axes. */
+    private fun caveChunk(): ChunkBlocks {
+        val blocks = CharArray(21 * 256)
+        for (y in 0..20) for (lz in 0..15) for (lx in 0..15) {
+            val air = y in 5..8 && lx in 4..11 && lz in 4..11
+            if (!air) blocks[(y shl 8) or (lz shl 4) or lx] = 1.toChar()
+        }
+        return ChunkBlocks(pos, 0, 20, arrayOf(BlockState.AIR, stone), blocks, ByteArray(256))
+    }
+
+    @Test
+    fun `in the cave view the cave floor is picked through the ground`() {
+        val blocks = caveChunk()
+        val x = pos.x * 16 + 8
+        val z = pos.z * 16 + 8
+        for (rotation in 0..3) {
+            val (u, v) = at(x + 0.5, 5.0, z + 0.5, rotation, 1.0)
+            assertEquals(BlockHit(x, 4, z, stone), BlockPick.inChunk(blocks, pos, IsoView(), 1.0, rotation, u, v, cave = true), "rotation $rotation")
+            // Without the cave view the ground above the cave hides it (here the chunk's side, which the line leaves by).
+            val ground = BlockPick.inChunk(blocks, pos, IsoView(), 1.0, rotation, u, v)
+            assertTrue(ground != null && ground.y > 8, "the ground hides the cave, rotation $rotation: $ground")
+            val (rx, rz) = Rotation.point(rotation, x + 0.5, z + 0.5)
+            assertEquals(BlockHit(x, 4, z, stone), BlockPick.inChunk(blocks, pos, IsoView(flat = true), 1.0, rotation, 2 * rx, 2 * rz, cave = true), "from above, rotation $rotation")
+        }
+    }
+
+    @Test
+    fun `in the cave view ground without a cave gives the ground`() {
+        val x = pos.x * 16 + 1
+        val z = pos.z * 16 + 1
+        val (u, v) = at(x + 0.5, 11.0, z + 0.5, 0, 1.0)
+        assertEquals(BlockHit(x, 10, z, stone), BlockPick.inChunk(chunk(), pos, IsoView(), 1.0, 0, u, v, cave = true))
     }
 }

@@ -14,6 +14,18 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
+/** What stops a ray of the Cave view: solid blocks (not plants, glass and the like). */
+internal fun caveSolid(state: BlockState) = !state.isAir && BlockColors.look(state).kind == BlockKind.SOLID
+
+internal fun caveWater(state: BlockState) = !state.isAir && BlockColors.look(state).kind == BlockKind.WATER
+
+/** Solid blocks that make no ceiling: trees. A cave is air under the ground, not under a canopy. */
+internal fun caveGrowth(state: BlockState): Boolean {
+    if (!caveSolid(state)) return false
+    val n = state.path
+    return n.endsWith("leaves") || n.endsWith("log") || n.endsWith("wood") || n.endsWith("stem") || n == "mushroom_block" || n.endsWith("_mushroom_block")
+}
+
 /**
  * The Cave view: the ground is see-through. A ray goes from the viewer through the chunk and passes everything
  * solid without drawing it; once it comes into a cave (air that has ground above it) it keeps going through the
@@ -73,11 +85,11 @@ object CaveTileRenderer {
             for ((i, state) in palette.withIndex()) {
                 if (i == 0 || state.isAir) continue
                 val look = BlockColors.look(state)
-                solid[i] = look.kind == BlockKind.SOLID
-                water[i] = look.kind == BlockKind.WATER
+                solid[i] = caveSolid(state)
+                water[i] = caveWater(state)
                 color[i] = look.color or (0xFF shl 24)
                 val n = state.path
-                growth[i] = solid[i] && (n.endsWith("leaves") || n.endsWith("log") || n.endsWith("wood") || n.endsWith("stem") || n == "mushroom_block" || n.endsWith("_mushroom_block"))
+                growth[i] = caveGrowth(state)
                 glowing[i] = n.contains("lava") || n.contains("magma") || n.contains("glowstone") || n.contains("shroomlight") ||
                     n.contains("sea_lantern") || n.contains("froglight")
             }

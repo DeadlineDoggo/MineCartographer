@@ -2,6 +2,7 @@ package minecartographer.core.edit
 
 import minecartographer.core.ChunkBounds
 import minecartographer.core.ChunkPos
+import minecartographer.core.Rotation
 import minecartographer.core.WorldSource
 
 /**
@@ -28,6 +29,29 @@ data class ChunkRef(
 
     /** The plain chunk, without any transform. */
     val plain: ChunkRef get() = if (transformed) ChunkRef(world, pos) else this
+
+    /**
+     * Where the block at world position ([x], [y], [z]) comes from when this chunk is placed at [at]: this chunk's world
+     * and the block's position there (turned back and lowered by [dy]). Null below [floor], where the original world's
+     * own block stays.
+     */
+    fun origin(at: ChunkPos, x: Int, y: Int, z: Int): BlockOrigin? {
+        if (floor?.let { y < it } == true) return null
+        var lx = x - at.x * 16
+        var lz = z - at.z * 16
+        // A turn takes local (x, z) to (15 - z, x); turning the rest of the way round takes it back.
+        repeat((4 - Rotation.normalize(turns)) % 4) {
+            val turned = 15 - lz
+            lz = lx
+            lx = turned
+        }
+        return BlockOrigin(world, pos.x * 16 + lx, y - dy, pos.z * 16 + lz)
+    }
+}
+
+/** A block's position ([x], [y], [z]) in the [world] it was read from. */
+data class BlockOrigin(val world: WorldSource, val x: Int, val y: Int, val z: Int) {
+    val chunk: ChunkPos get() = ChunkPos(Math.floorDiv(x, 16), Math.floorDiv(z, 16))
 }
 
 /** Override of one chunk in the [BaseLayer]. */
